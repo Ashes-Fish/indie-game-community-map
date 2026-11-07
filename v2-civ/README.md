@@ -18,7 +18,7 @@ URL 参数（调试/截图用）：`?instant` 跳过开场动画，`?view=hangzh
 - 高程：AWS Terrain Tiles（Terrarium，z9，含 SRTM/GEBCO 等），烘焙成 `public/data/height.png`。
 - 海岸、湖泊、长江：Terrarium 水深 + Natural Earth 10m（land / lakes / rivers），烘焙成水域距离场 `public/data/water.png`。运河、黄浦江、西湖为手绘近似。
 - 社团：直接读仓库 `site/data/communities.json`，logo 由 `site/images/` 缩成 256px webp。
-- 重新烘焙：`scripts/fetch_dem.py` 下载高程瓦片，Natural Earth 三个 geojson 放 `bake-raw/ne/`，再跑 `scripts/bake.py`。
+- 重新烘焙：`scripts/fetch_dem.py` 下载高程瓦片，Natural Earth 三个 geojson（`ne_10m_land`、`ne_10m_lakes`、`ne_10m_rivers_lake_centerlines`，从 `https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/<文件名>.geojson` 下载）放 `bake-raw/ne/`，再跑 `scripts/bake.py`。原始数据约 27 MB，不进仓库。
 
 ## 画面环境（P2）
 
