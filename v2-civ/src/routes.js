@@ -52,13 +52,31 @@ function fogFade(mat, shared, body) {
 
 export function buildRivers(world, rivers, shared) {
   const group = new THREE.Group();
-  const mat = fogFade(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.18, metalness: 0.0, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }), shared, `
+  // flowing ribbon: deep channel → shallow banks, ripple normals advected downstream (two phases cross-faded), sun glints
+  const mat = fogFade(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.16, metalness: 0.0, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }), shared, `
     float across = abs(vUv.y - 0.5) * 2.0;
-    float flow = 0.5 + 0.5 * sin(vUv.x * 2.2 - uTime * 2.4 + sin(vUv.y * 9.0) * 0.6);
-    vec3 deep = vec3(0.03, 0.30, 0.50), shallow = vec3(0.10, 0.55, 0.62);
-    diffuseColor.rgb = mix(deep, shallow, across * 0.8) + vec3(0.18, 0.22, 0.2) * smoothstep(0.82, 1.0, flow) * (1.0 - across);
-    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.75, 0.85, 0.75), smoothstep(0.72, 1.0, across) * 0.5);
-    diffuseColor.a = 1.0 - smoothstep(0.82, 1.0, across);`);
+    float ph0 = fract(uTime * 0.12), ph1 = fract(uTime * 0.12 + 0.5), fw0 = 1.0 - abs(1.0 - 2.0 * ph0);
+    vec2 fq = vec2(vUv.x * 0.55, vUv.y * 0.35);
+    vec4 r0 = texture2D(uRipple, fq - vec2(ph0 * 0.9, 0.0));
+    vec4 r1 = texture2D(uRipple, fq + 0.41 - vec2(ph1 * 0.9, 0.0));
+    vec4 rr = mix(r1, r0, fw0);
+    rivN = (rr.xy - 0.5) * 1.6;
+    float streak = smoothstep(0.62, 0.9, rr.w) * (1.0 - across);
+    vec3 deep = vec3(0.03, 0.30, 0.48), shallow = vec3(0.12, 0.56, 0.6);
+    diffuseColor.rgb = mix(deep, shallow, smoothstep(0.2, 1.0, across));
+    diffuseColor.rgb += vec3(0.16, 0.2, 0.18) * streak;
+    float bankFoam = smoothstep(0.72, 0.9, across + (rr.z - 0.5) * 0.25);
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.93, 0.9), bankFoam * 0.55);
+    rivGlint = smoothstep(0.78, 0.95, rr.w) * step(0.6, fract(rr.z * 7.0 + uTime * 0.3)) * (1.0 - across);
+    diffuseColor.a = 1.0 - smoothstep(0.84, 1.0, across);`);
+  const prev = mat.onBeforeCompile;
+  mat.onBeforeCompile = (sh, r) => {
+    prev(sh, r);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('varying vec3 vRW;', 'varying vec3 vRW;\nuniform sampler2D uRipple;\nvec2 rivN; float rivGlint;')
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\nnormal = normalize((viewMatrix * vec4(rivN.x, 1.0, rivN.y, 0.0)).xyz);')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += vec3(1.0, 0.92, 0.75) * rivGlint * 0.9;');
+  };
   // ensure uv varying exists
   mat.defines = { USE_UV: '' };
   for (const r of rivers) {
@@ -92,12 +110,13 @@ export function buildRoads(world, cities, shared) {
     diffuseColor.a = (1.0 - smoothstep(0.5, 1.0, across)) * 0.8;`);
   mat.defines = { USE_UV: '' };
   const group = new THREE.Group();
+  group.userData.paths = [];   // land segments, reused by walkers and ox carts
   for (const r of routes) {
     const { pts } = smoothPath(r, 0.5);
     const keep = pts.filter((p) => world.sdf(p.x, p.z) < -0.2);
     // split where the path leaves land
     let seg = [];
-    const flush = () => { if (seg.length > 3) { const m = new THREE.Mesh(ribbon(seg, 0.3, (x, z) => world.heightY(x, z), 0.05), mat); m.renderOrder = 1; m.receiveShadow = true; group.add(m); } seg = []; };
+    const flush = () => { if (seg.length > 3) { group.userData.paths.push(seg); const m = new THREE.Mesh(ribbon(seg, 0.3, (x, z) => world.heightY(x, z), 0.05), mat); m.renderOrder = 1; m.receiveShadow = true; group.add(m); } seg = []; };
     for (const p of pts) { if (world.sdf(p.x, p.z) < -0.25) seg.push(p); else flush(); }
     flush();
   }

@@ -16,6 +16,7 @@ export const GLSL_COMMON = /* glsl */`
 uniform sampler2D uHex;
 uniform float uRevealB;
 uniform float uTime;
+uniform float uCamDist;
 
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f*f*(3.0-2.0*f);
@@ -37,6 +38,12 @@ vec4 hexData(vec2 a){
   vec2 ij = vec2(col + HEXOFF, r + HEXOFF);
   if (ij.x < 0.0 || ij.y < 0.0 || ij.x > HEXN-1.0 || ij.y > HEXN-1.0) return vec4(0.0, 0.0, 1.0, 0.0);
   return texture2D(uHex, (ij + 0.5)/HEXN);
+}
+// slow drifting cloud shadows on the ground (1 = full sun); faded out at strategic zoom where they'd read as smudges
+float cloudShade(vec2 p){
+  vec2 q = p * 0.032 + uTime * vec2(0.012, 0.005);
+  float n = vnoise(q) * 0.65 + vnoise(q * 2.9 + 7.1) * 0.35;
+  return 1.0 - 0.45 * smoothstep(0.54, 0.63, n) * (1.0 - smoothstep(200.0, 420.0, uCamDist));
 }
 float hexRevealed(vec4 d){ return step(d.b*255.0, uRevealB); }
 // smooth reveal field (1 = revealed). Kernel blend of the 7 nearest hexes with a domain warp.
