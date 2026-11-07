@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import './style.css';
 import { World, loadImage } from './world.js';
 import { CITIES, COMMUNITIES } from './data.js';
-import { buildTerrainMesh } from './terrain.js';
+import { buildTerrainMesh, loadTerrainTextures, makeRippleTexture } from './terrain.js';
 import { buildInkTexture } from './parchment.js';
 import { CivCamera } from './camera.js';
 import { buildProps } from './props.js';
@@ -11,6 +11,9 @@ import { buildRivers, buildRoads, buildTrade, buildBoats } from './routes.js';
 import { buildHuangshan } from './wonder.js';
 import { Dust, Beams, easeOutBack } from './fx.js';
 import { UI } from './ui.js';
+import { buildClouds } from './clouds.js';
+import { buildSmoke, buildBirds, buildWalkers, livenBuildings } from './life.js';
+import { bakeAO } from './ao.js';
 import { HEX_R, toWorld } from './config.js';
 
 const BASE = import.meta.env.BASE_URL;
@@ -73,7 +76,7 @@ const shared = {
   uniforms: {
     uHex: { value: null }, uRevealB: { value: 0 }, uTime: { value: 0 },
     uWater: { value: null }, uNormalTex: { value: null }, uInk: { value: null },
-    uCamDist: { value: 300 }, uGrid: { value: 0.34 },
+    uCamDist: { value: 300 }, uGrid: { value: 0.34 }, uTerr: { value: null }, uRipple: { value: null },
     uOwnCol: { value: Array.from({ length: 8 }, () => new THREE.Color(0, 0, 0)) },
     uOwnCol2: { value: Array.from({ length: 8 }, () => new THREE.Color(1, 1, 1)) },
     uHiHex: { value: new THREE.Vector2(999, 999) }, uHi: { value: 0 },
@@ -84,7 +87,7 @@ const portrait = innerHeight > innerWidth * 1.15;
 const OVERVIEW = mobile ? (portrait ? { x: 3, z: -2, d: 950 } : { x: -10, z: 5, d: 470 }) : { x: -24, z: -3, d: 462 };
 
 const cam = new CivCamera(camera, canvas, { maxD: OVERVIEW.d + 40, minD: mobile ? 26 : 30 });
-let world, ui, post, trade, hs, dust, beams, props, boats, proxies = [], hovered = null;
+let world, ui, post, trade, hs, dust, beams, props, boats, clouds, smoke, birds, walkers, proxies = [], hovered = null;
 
 async function loadLogos() {
   const out = {};
@@ -98,7 +101,9 @@ async function init() {
   const postP = Q.post ? import('./post.js') : null;
   progress(0.15, '正在测绘山川…');
   world = new World();
-  const [rivers, logos] = await Promise.all([fetch(BASE + 'data/rivers.json').then((r) => r.json()), loadLogos(), world.load(BASE)]);
+  const [rivers, logos, terrTex] = await Promise.all([fetch(BASE + 'data/rivers.json').then((r) => r.json()), loadLogos(), loadTerrainTextures(BASE + 'tex/terrain.webp'), world.load(BASE)]);
+  shared.uniforms.uTerr.value = terrTex;
+  shared.uniforms.uRipple.value = makeRippleTexture();
   progress(0.4, '正在勘定疆界…');
   world.buildHexes(CITIES, COMMUNITIES);
   CITIES.forEach((c, i) => { shared.uniforms.uOwnCol.value[i + 1].set(c.color).convertSRGBToLinear(); shared.uniforms.uOwnCol2.value[i + 1].set(c.color2).convertSRGBToLinear(); });
@@ -113,18 +118,37 @@ async function init() {
   await tick();
   progress(0.55, '正在研墨绘图…');
   shared.uniforms.uInk.value = buildInkTexture(world, rivers.rivers, Q.ink);
-  scene.add(buildTerrainMesh(world, shared, Q.step).group);
+  scene.add(buildTerrainMesh(world, shared, Q.step, Q.mobile).group);
   await tick();
   progress(0.72, '正在营建城郭…');
   const [hx, hz] = toWorld(118.17, 30.13);
   const keepOut = [...CITIES.map((c) => ({ x: c.x, z: c.z, r: 5.4 })), ...COMMUNITIES.map((c) => ({ x: c.x, z: c.z, r: 4.3 })), { x: hx, z: hz, r: 7 }];
   props = buildProps(world, shared, Q, keepOut);
   scene.add(props.group);
-  scene.add(buildCities(world, CITIES, shared).group);
-  scene.add(buildDistricts(world, COMMUNITIES, CITIES, shared, logos));
-  scene.add(buildWestLake(world, rivers));
+  const cityGroup = buildCities(world, CITIES, shared).group;
+  const distGroup = buildDistricts(world, COMMUNITIES, CITIES, shared, logos);
+  const westLake = buildWestLake(world, rivers);
+  scene.add(cityGroup, distGroup, westLake);
+  // baked vertex AO (worker, async — buildings pop in darker a moment later) + cloud shadows / lantern flicker
+  if (qs.get('ao') !== '0') {
+    const strength = Q.post ? 0.5 : 0.75;   // desktop also has screen-space AO up close
+    for (const c of CITIES) bakeAO(c.group, { radius: 0.7, strength });
+    for (const c of COMMUNITIES) bakeAO(c.inner, { radius: 0.8, strength });
+    bakeAO(westLake, { radius: 0.6, strength });
+  }
+  for (const g of [cityGroup, distGroup, westLake]) livenBuildings(g, shared);
   scene.add(buildRivers(world, rivers.rivers, shared));
-  scene.add(buildRoads(world, CITIES, shared));
+  const roads = buildRoads(world, CITIES, shared);
+  scene.add(roads);
+  // life: chimney smoke over villages and city lanes, walkers and ox carts on the roads, birds over lakes and towns
+  const R = (k) => ((Math.sin(k * 91.7) * 43758.5) % 1 + 1) % 1;
+  const emit = props.houses.filter((h, i) => R(i) < (Q.mobile ? 0.12 : 0.22)).map((h, i) => ({ x: h.x + 0.2 * h.s, y: h.y + 0.62 * h.s * (h.sy || 1), z: h.z, ph: R(i + 0.5) }));
+  for (const c of CITIES) for (let k = 0; k < 3; k++) emit.push({ x: c.x + (R(k + c.x) - 0.5) * 4, y: c.y + 0.6, z: c.z + (R(k * 3 + c.z) - 0.5) * 4, ph: R(k + 7) });
+  smoke = buildSmoke(emit, shared, Q);
+  walkers = buildWalkers(world, roads.userData.paths, Q);
+  const [wlx, wlz] = toWorld(120.14, 30.24);
+  birds = buildBirds(world, [{ x: 9, z: -12 }, { x: wlx, z: wlz }, CITIES[3], { x: -20, z: -60 }, CITIES[0], { x: 60, z: 20 }], shared, Q);
+  scene.add(smoke.points, walkers.group, birds.mesh);
   const lud = COMMUNITIES.find((c) => c.key === 'ludere');
   trade = buildTrade(world, lud, CITIES.find((c) => c.id === 'changshu'), shared);
   scene.add(trade.group);
@@ -132,6 +156,8 @@ async function init() {
   scene.add(boats.group);
   hs = buildHuangshan(world, hx, hz, shared);
   scene.add(hs.group);
+  clouds = buildClouds(world, CITIES, shared, Q);
+  scene.add(clouds.mesh);
   dust = new Dust(); beams = new Beams();
   scene.add(dust.points, beams.group);
   // pick proxies
@@ -151,7 +177,7 @@ async function init() {
   ui.addLabel('杭 州 湾', 98, 0.6, 78, 'water');
   ui.addLabel('天 目 山', -62, 5, 84);
   ui.addLabel('京杭大运河', 46, 0.6, 30, 'water');
-  ui.addLabel('⛰ 黄山 · 自然奇观', hx + 4, 12, hz - 9, 'wonder');
+  ui.addLabel('黄山 · 自然奇观', hx + 4, 12, hz - 9, 'wonder');
 
   if (Q.post) {
     progress(0.86, '正在调和光影…');
@@ -161,7 +187,7 @@ async function init() {
   }
   progress(0.95, '即将完成…');
   renderer.compile(scene, camera);
-  window.__dbg = { world, scene, cam, shared, renderer, camera, COMMUNITIES, CITIES, select, focusCity, intro, get post() { return post; } };
+  window.__dbg = { world, scene, cam, shared, renderer, camera, COMMUNITIES, CITIES, select, focusCity, intro, perf, get post() { return post; } };
   start();
 }
 
@@ -307,9 +333,27 @@ function start() {
   }
 }
 
+// adaptive resolution: if the GPU can't hold ~55 fps, drop the render pixel ratio a notch (never back up, no flicker)
+const perf = { t: 0, n: 0, dpr: Q.dpr, since: 0 };
+function adaptResolution(raw) {
+  perf.since += raw;
+  if (perf.since < 4 || raw > 0.5) return;   // skip start-up shader compiles and tab switches
+  perf.t += raw; perf.n++;
+  if (perf.t < 2) return;
+  const fps = perf.n / perf.t;
+  perf.t = perf.n = 0;
+  if (fps < 52 && perf.dpr > 1) {
+    perf.dpr = Math.max(1, perf.dpr - 0.25);
+    renderer.setPixelRatio(perf.dpr);
+    if (post) post.setPixelRatio(perf.dpr);
+  }
+}
+
 function frame() {
   const now = performance.now();
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const raw = (now - last) / 1000;
+  const dt = Math.min(0.05, raw); last = now;
+  adaptResolution(raw);
   const U = shared.uniforms;
   U.uTime.value += dt;
   updateIntro(dt);
@@ -329,6 +373,10 @@ function frame() {
   props.setDist(cam.dist);
   dust.update(dt); beams.update(dt); trade.update(dt); boats.update(dt); hs.update(U.uTime.value);
   dust.mat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() * 0.9;
+  smoke.mat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() * 0.9;
+  clouds.update(U.uRevealB.value, REVEAL_FINAL);
+  birds.update(U.uTime.value, cam.dist);
+  walkers.update(dt, U.uTime.value, cam.dist);
   ui.update(camera, cam.dist, (c) => intro.built.has(c.key));
   if (post) { post.update(cam.dist); post.render(); } else renderer.render(scene, camera);
 }

@@ -5,17 +5,20 @@ import { GLSL_COMMON } from './glsl.js';
 import { paint } from './kit.js';
 import { BIOME } from './world.js';
 import { HEX_R, rng } from './config.js';
+import { bakeAO } from './ao.js';
 
-// Patch any material so instances collapse where the fog field is low.
-export function fogPatch(mat, shared, lo = 0.66, hi = 0.82) {
+// Patch any material so instances collapse where the fog field is low; lit materials also get drifting cloud
+// shadows, and `sway` makes foliage lean in the wind (per-tree sway plus gusts rolling across the woods).
+export function fogPatch(mat, shared, lo = 0.66, hi = 0.82, sway = false) {
   const prev = mat.onBeforeCompile;
-  mat.customProgramCacheKey = () => `fogPatch:${lo}:${hi}:${mat.type}`;
+  const lit = !!mat.isMeshStandardMaterial;
+  mat.customProgramCacheKey = () => `fogPatch:${lo}:${hi}:${mat.type}:${sway}`;
   mat.onBeforeCompile = (sh, r) => {
     if (prev) prev(sh, r);
     Object.assign(sh.uniforms, shared.uniforms);
     sh.uniforms.uPropVis = mat.userData.vis || { value: 1 };
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', `#include <common>\n${GLSL_COMMON}\nuniform float uPropVis;`)
+      .replace('#include <common>', `#include <common>\n${GLSL_COMMON}\nuniform float uPropVis;\nvarying vec2 vPW;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
       #ifdef USE_INSTANCING
         vec4 ip4 = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
@@ -23,7 +26,20 @@ export function fogPatch(mat, shared, lo = 0.66, hi = 0.82) {
         vec4 ip4 = modelMatrix * vec4(0.0, 0.0, 0.0, 1.0);
       #endif
         float pvis = smoothstep(${lo.toFixed(2)}, ${hi.toFixed(2)}, fogField(ip4.xz)) * uPropVis;
-        transformed *= pvis;`);
+        transformed *= pvis;
+        vPW = ip4.xz;
+      ${sway ? `#ifdef USE_INSTANCING
+        float gust = 0.55 + 0.45 * sin(dot(ip4.xz, vec2(0.11, 0.07)) - uTime * 1.1);
+        float swy = (sin(uTime * 1.7 + ip4.x * 0.9 + ip4.z * 0.6) * 0.6 + sin(uTime * 3.1 + ip4.z * 1.3) * 0.25 + 0.35) * gust;
+        vec3 windW = vec3(0.9, 0.0, 0.45) * swy * 0.08 * smoothstep(0.25, 1.4, position.y);
+        mat3 im3 = mat3(instanceMatrix);
+        transformed += transpose(im3) * windW / max(dot(im3[0], im3[0]), 1e-4) * pvis;
+      #endif` : ''}`);
+    if (lit) {
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>\n${GLSL_COMMON}\nvarying vec2 vPW;`)
+        .replace('#include <aomap_fragment>', 'float cS = cloudShade(vPW); reflectedLight.directDiffuse *= cS; reflectedLight.directSpecular *= cS;\n#include <aomap_fragment>');
+    }
   };
   return mat;
 }
@@ -43,14 +59,14 @@ function jitter(g, amt, seed) {
 
 function treeGeos() {
   const trunk = (h) => paint(new THREE.CylinderGeometry(0.05, 0.08, h, 5).translate(0, h / 2, 0), '#6b4a2e');
-  const leaf = jitter(new THREE.IcosahedronGeometry(0.5, 0).scale(1, 0.9, 1).toNonIndexed(), 0.18, 7).translate(0, 0.78, 0);
-  const leaf2 = jitter(new THREE.IcosahedronGeometry(0.3, 0).toNonIndexed(), 0.12, 9).translate(0.28, 0.6, 0.12);
+  const leaf = jitter(new THREE.IcosahedronGeometry(0.5, 0).scale(1, 0.9, 1), 0.18, 7).translate(0, 0.78, 0);
+  const leaf2 = jitter(new THREE.IcosahedronGeometry(0.3, 0), 0.12, 9).translate(0.28, 0.6, 0.12);
   const broad = mergeGeometries([trunk(0.5), paint(leaf, '#ffffff'), paint(leaf2, '#f0f0f0')]);
   const c1 = paint(new THREE.ConeGeometry(0.42, 0.75, 6).translate(0, 0.55, 0), '#ffffff');
   const c2 = paint(new THREE.ConeGeometry(0.32, 0.62, 6).translate(0, 0.92, 0), '#f4f4f4');
   const c3 = paint(new THREE.ConeGeometry(0.2, 0.5, 6).translate(0, 1.25, 0), '#ebebeb');
   const conifer = mergeGeometries([trunk(0.35), c1, c2, c3]);
-  const bush = paint(jitter(new THREE.IcosahedronGeometry(0.26, 0).scale(1.2, 0.75, 1).toNonIndexed(), 0.1, 3).translate(0, 0.15, 0), '#ffffff');
+  const bush = paint(jitter(new THREE.IcosahedronGeometry(0.26, 0).scale(1.2, 0.75, 1), 0.1, 3).translate(0, 0.15, 0), '#ffffff');
   return { broad, conifer, bush };
 }
 
@@ -99,6 +115,8 @@ export function buildProps(world, shared, Q, keepOut) {
   const group = new THREE.Group();
   const mat = fogPatch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true }), shared);
   const depth = fogPatch(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }), shared);
+  const matTree = fogPatch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true }), shared, 0.66, 0.82, true);
+  const depthTree = fogPatch(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }), shared, 0.66, 0.82, true);
   const smallVis = { value: 1 };
   const matSmall = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true });
   matSmall.userData.vis = smallVis; fogPatch(matSmall, shared);
@@ -184,7 +202,8 @@ export function buildProps(world, shared, Q, keepOut) {
   for (const [k, list] of Object.entries(lists)) {
     if (!list.length) continue;
     const small = k === 'house' || k === 'bush';
-    const im = new THREE.InstancedMesh(geos[k], small ? matSmall : mat, list.length);
+    const tree = k === 'broad' || k === 'conifer';
+    const im = new THREE.InstancedMesh(geos[k], small ? matSmall : tree ? matTree : mat, list.length);
     list.forEach((it, i) => {
       e.set(0, it.ry, 0); q.setFromEuler(e);
       sc.set(it.s, (it.sy ?? 1) * (k.startsWith('peak') ? 1 : it.s), it.s);
@@ -193,10 +212,12 @@ export function buildProps(world, shared, Q, keepOut) {
       im.setColorAt(i, col.set(it.c));
     });
     im.castShadow = true; im.receiveShadow = true;
-    im.customDepthMaterial = small ? depthSmall : depth;
+    im.customDepthMaterial = small ? depthSmall : tree ? depthTree : depth;
     im.computeBoundingSphere();
     group.add(im);
     meshes[k] = im;
   }
-  return { group, meshes, setDist(d) { smallVis.value = Math.min(1, Math.max(0, (300 - d) / 90)); }, counts: Object.fromEntries(Object.entries(lists).map(([k, l]) => [k, l.length])) };
+  // grounded, volumetric foliage and houses: bake AO once on each base geometry (in the AO worker)
+  for (const k of ['broad', 'conifer', 'bush', 'house']) if (meshes[k]) bakeAO(meshes[k], { radius: k === 'house' ? 0.3 : 0.4, strength: 0.75, rays: 20 });
+  return { group, meshes, houses: lists.house, setDist(d) { smallVis.value = Math.min(1, Math.max(0, (300 - d) / 90)); }, counts: Object.fromEntries(Object.entries(lists).map(([k, l]) => [k, l.length])) };
 }

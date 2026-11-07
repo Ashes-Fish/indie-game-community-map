@@ -69,13 +69,14 @@ export function makePost(renderer, scene, camera) {
   return {
     composer, ao, bloom,
     setSize,
+    setPixelRatio(pr) { composer.setPixelRatio(pr); setSize(innerWidth, innerHeight); },
     update(dist) {
       const amt = THREE.MathUtils.clamp(1 - (dist - 45) / 170, 0, 1);
       th.uniforms.uAmount.value = tv.uniforms.uAmount.value = 0.25 + amt * 1.0;
       th.uniforms.uWidth.value = tv.uniforms.uWidth.value = 0.12 + (1 - amt) * 0.14;
-      ao.configuration.aoRadius = THREE.MathUtils.clamp(dist * 0.03, 1.2, 6);
-      // AO matters close up; at strategic zoom swap to a plain render pass to save GPU
-      const useAO = dist < 300;
+      ao.configuration.aoRadius = THREE.MathUtils.clamp(dist * 0.03, 1.2, 3.5);
+      // screen-space AO only up close (buildings carry baked vertex AO further out); otherwise a plain render pass
+      const useAO = dist < 140;
       if (ao.enabled !== useAO) { ao.enabled = useAO; plain.enabled = !useAO; }
     },
     render() { composer.render(); },

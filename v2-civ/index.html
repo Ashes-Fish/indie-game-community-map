@@ -6,6 +6,7 @@
 <title>中国独立游戏社团地图 · 长三角</title>
 <meta name="description" content="把各地独立游戏社群标在地图上：去哪个城市能找到哪些同好。" />
 <meta name="theme-color" content="#0f1a2e" />
+<link rel="preload" href="./fonts/igcm-serif-bold.woff2" as="font" type="font/woff2" crossorigin />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22%3E%3Cpolygon points=%2232,2 58,17 58,47 32,62 6,47 6,17%22 fill=%22%23b5392e%22 stroke=%22%23d4ab55%22 stroke-width=%224%22/%3E%3Ctext x=%2232%22 y=%2243%22 font-size=%2230%22 text-anchor=%22middle%22 fill=%22%23fff3d6%22%3E%E6%B8%B8%3C/text%3E%3C/svg%3E" />
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#e6d6b0;font-family:"Songti SC","STSong","Noto Serif SC","Source Han Serif SC","SimSun",serif;-webkit-tap-highlight-color:transparent}
@@ -15,10 +16,15 @@
   #loader::before{content:"";position:absolute;inset:0;pointer-events:none;
     background:repeating-linear-gradient(93deg,rgba(120,90,50,.035) 0 2px,transparent 2px 7px),radial-gradient(ellipse at 50% 50%,transparent 55%,rgba(90,55,20,.35) 100%)}
   #loader svg{width:min(420px,78vw);height:auto;opacity:.92}
-  #loader h1{margin:18px 0 4px;font-weight:700;letter-spacing:.32em;color:#2a1d12;font-size:clamp(22px,4.6vw,34px);text-indent:.32em}
-  #loader .sub{color:#6b4c2a;letter-spacing:.5em;font-size:clamp(12px,2.6vw,15px);text-indent:.5em}
-  #loader .bar{margin-top:26px;width:min(260px,60vw);height:3px;background:rgba(60,40,20,.18);border-radius:2px;overflow:hidden}
-  #loader .bar i{display:block;height:100%;width:8%;background:linear-gradient(90deg,#8a5a24,#c9a24a);transition:width .3s}
+  #loader h1{margin:18px 0 6px;font-family:"IGCM Serif","Source Han Serif SC","Songti SC",serif;font-weight:700;letter-spacing:.32em;color:#2a1d12;font-size:clamp(22px,4.6vw,34px);text-indent:.32em;text-shadow:0 1px 0 rgba(255,245,220,.6)}
+  #loader .sub{display:flex;align-items:center;gap:14px;color:#6b4c2a;letter-spacing:.5em;font-size:clamp(12px,2.6vw,15px);text-indent:.5em}
+  #loader .sub::before,#loader .sub::after{content:"";width:64px;height:8px;
+    background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='8'%3E%3Cpath d='M0 4H55' stroke='%23a8823c'/%3E%3Cpath d='M60 .8 63.2 4 60 7.2 56.8 4z' fill='%23a8823c'/%3E%3C/svg%3E")}
+  #loader .sub::after{transform:scaleX(-1)}
+  #loader .bar{position:relative;margin-top:26px;width:min(260px,60vw);height:3px;background:rgba(60,40,20,.18);border-radius:2px;overflow:visible;box-shadow:0 0 0 1px rgba(168,130,60,.35)}
+  #loader .bar::before,#loader .bar::after{content:"";position:absolute;top:50%;left:-9px;width:6px;height:6px;margin-top:-3px;transform:rotate(45deg);background:#a8823c}
+  #loader .bar::after{left:auto;right:-9px}
+  #loader .bar i{display:block;height:100%;width:8%;border-radius:2px;background:linear-gradient(90deg,#8a5a24,#c9a24a);transition:width .3s}
   #loader .ltip{margin-top:12px;color:#7a5a36;font-size:13px;letter-spacing:.2em}
   .ink-draw path{stroke-dasharray:600;stroke-dashoffset:600;animation:draw 2.4s ease forwards}
   .ink-draw path:nth-child(2){animation-delay:.25s}.ink-draw path:nth-child(3){animation-delay:.5s}.ink-draw path:nth-child(4){animation-delay:.8s}

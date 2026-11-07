@@ -1,2 +1,4 @@
 node_modules/
 bake-raw/
+dist/
+scripts/.cache/
