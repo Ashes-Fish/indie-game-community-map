@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { Builder, makeMaterials } from './kit.js';
 import { HEX_R, rng } from './config.js';
+import { ASSET, glbSlot } from './assets.js';
 
 const C = {
   wall: '#8f8778', wallTop: '#6c665c', red: '#b5392e', redD: '#8e2a22', roof: '#3e4652', roofD: '#2f353f',
@@ -125,8 +126,9 @@ export function buildWestLake(world, rivers) {
   // Leifeng pagoda on the south shore hill
   const px = cx + 1.2, pz = cz + 3.9;
   const py = world.heightY(px, pz);
-  b.pagoda(5, 0.9, 0.5, '#b5652e', C.roofD, px, py, pz, { round: true, spire: C.gold, plinthColor: C.stone });
+  if (ASSET === 'old') b.pagoda(5, 0.9, 0.5, '#b5652e', C.roofD, px, py, pz, { round: true, spire: C.gold, plinthColor: C.stone });
   const grp = b.build(mats);
+  if (ASSET !== 'old') { const t = glbSlot('leifeng'); t.position.set(px, py - 0.05, pz); grp.add(t); }
   return grp;
 }
 
@@ -317,13 +319,15 @@ export function buildDistricts(world, communities, cities, shared, logos) {
     const city = cities.find((c) => c.id === cm.cityId);
     const R = rng(cm.key.length * 977 + 13);
     const b = new Builder();
-    STYLES[cm.style](b, R);
+    const glb = ASSET !== 'old' && cm.style === 'guild';
+    if (!glb) STYLES[cm.style](b, R);
     const mats = makeMaterials();
-    const g = b.build(mats);
+    const g = glb ? glbSlot('guild') : b.build(mats);
     const holder = new THREE.Group();
     holder.add(g);
-    // orient the compound to face the camera (south) with a slight random twist
+    // orient the compound to face the camera (south) with a slight random twist (GLB bases stay aligned to the hex grid)
     g.rotation.y = (R() - 0.5) * 0.25;
+    if (glb) g.rotation.y = 0;
     const flag = makeFlag(cm, city.color, logos[cm.logo], shared);
     flag.position.set(2.7, 0, 2.0);
     flag.rotation.y = -0.35;
