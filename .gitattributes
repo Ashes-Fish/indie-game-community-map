@@ -1,0 +1,2 @@
+# shell scripts must keep LF so sh can run them on Windows checkouts (core.autocrlf)
+*.sh text eol=lf
