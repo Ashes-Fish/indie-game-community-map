@@ -1,5 +1,5 @@
 // Small signs of life, all cheap: chimney smoke, bird flocks, walkers and ox carts on the roads,
-// flickering lanterns and drifting cloud shadows on buildings.
+// flickering lanterns on buildings.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GLSL_COMMON } from './glsl.js';
@@ -191,7 +191,7 @@ export function buildWalkers(world, paths, Q) {
   };
 }
 
-// ---------- buildings: cloud shadows on lit materials, candle flicker on lanterns / windows ----------
+// ---------- buildings: candle flicker on lanterns / windows ----------
 export function livenBuildings(root, shared) {
   root.traverse((o) => {
     if (!o.isMesh || !o.material || o.material.userData.livened) return;
@@ -219,10 +219,6 @@ export function livenBuildings(root, shared) {
           float candle = 0.84 + 0.16 * sin(uTime * (6.0 + hs * 5.0) + hs * 40.0) * sin(uTime * 2.1 + hs * 13.0);
           float blink = 1.0 - 0.55 * step(0.992, hash12(vec2(floor(uTime * 8.0), hs * 91.0)));
           diffuseColor.rgb *= mix(blink, candle, warm);`);
-      } else {
-        sh.fragmentShader = sh.fragmentShader.replace('#include <aomap_fragment>', `float cS = cloudShade(vLW.xz);
-          reflectedLight.directDiffuse *= cS; reflectedLight.directSpecular *= cS;
-          #include <aomap_fragment>`);
       }
     };
     m.needsUpdate = true;

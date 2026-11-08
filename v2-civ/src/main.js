@@ -11,7 +11,6 @@ import { buildRivers, buildRoads, buildTrade, buildBoats } from './routes.js';
 import { buildHuangshan } from './wonder.js';
 import { Dust, Beams, easeOutBack } from './fx.js';
 import { UI } from './ui.js';
-import { buildClouds } from './clouds.js';
 import { buildSmoke, buildBirds, buildWalkers, livenBuildings } from './life.js';
 import { bakeAO } from './ao.js';
 import { HEX_R, toWorld } from './config.js';
@@ -90,7 +89,7 @@ const portrait = innerHeight > innerWidth * 1.15;
 const OVERVIEW = mobile ? (portrait ? { x: 3, z: -2, d: 950 } : { x: -10, z: 5, d: 470 }) : { x: -24, z: -3, d: 462 };
 
 const cam = new CivCamera(camera, canvas, { maxD: OVERVIEW.d + 40, minD: mobile ? 26 : 30 });
-let world, ui, post, trade, hs, dust, beams, props, boats, sites = [], clouds, smoke, birds, walkers, proxies = [], hovered = null;
+let world, ui, post, trade, hs, dust, beams, props, boats, sites = [], smoke, birds, walkers, proxies = [], hovered = null;
 
 async function loadLogos() {
   const out = {};
@@ -133,7 +132,7 @@ async function init() {
   const distGroup = buildDistricts(world, sites, CITIES, shared, logos, BASE);
   const westLake = buildWestLake(world, rivers);
   scene.add(cityGroup, distGroup, westLake);
-  // baked vertex AO (worker, async — buildings pop in darker a moment later) + cloud shadows / lantern flicker
+  // baked vertex AO (worker, async — buildings pop in darker a moment later) + lantern flicker
   if (qs.get('ao') !== '0') {
     const strength = Q.post ? 0.5 : 0.75;   // desktop also has screen-space AO up close
     for (const c of CITIES) bakeAO(c.group, { radius: 0.7, strength });
@@ -161,8 +160,6 @@ async function init() {
   scene.add(boats.group);
   hs = buildHuangshan(world, hx, hz, shared);
   scene.add(hs.group);
-  clouds = buildClouds(world, CITIES, shared, Q);
-  scene.add(clouds.mesh);
   dust = new Dust(); beams = new Beams();
   scene.add(dust.points, beams.group);
   // pick proxies
@@ -402,7 +399,6 @@ function frame() {
   dust.update(dt); beams.update(dt); trade.update(dt); boats.update(dt); hs.update(U.uTime.value);
   dust.mat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() * 0.9;
   smoke.mat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() * 0.9;
-  clouds.update(U.uRevealB.value, REVEAL_FINAL);
   birds.update(U.uTime.value, cam.dist);
   walkers.update(dt, U.uTime.value, cam.dist);
   ui.update(camera, cam.dist, (c) => intro.built.has(c.key));

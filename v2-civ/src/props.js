@@ -7,18 +7,16 @@ import { BIOME } from './world.js';
 import { HEX_R, rng } from './config.js';
 import { bakeAO } from './ao.js';
 
-// Patch any material so instances collapse where the fog field is low; lit materials also get drifting cloud
-// shadows, and `sway` makes foliage lean in the wind (per-tree sway plus gusts rolling across the woods).
+// Patch any material so instances collapse where the fog field is low; `sway` makes foliage lean in the wind (per-tree sway plus gusts rolling across the woods).
 export function fogPatch(mat, shared, lo = 0.66, hi = 0.82, sway = false) {
   const prev = mat.onBeforeCompile;
-  const lit = !!mat.isMeshStandardMaterial;
   mat.customProgramCacheKey = () => `fogPatch:${lo}:${hi}:${mat.type}:${sway}`;
   mat.onBeforeCompile = (sh, r) => {
     if (prev) prev(sh, r);
     Object.assign(sh.uniforms, shared.uniforms);
     sh.uniforms.uPropVis = mat.userData.vis || { value: 1 };
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', `#include <common>\n${GLSL_COMMON}\nuniform float uPropVis;\nvarying vec2 vPW;`)
+      .replace('#include <common>', `#include <common>\n${GLSL_COMMON}\nuniform float uPropVis;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
       #ifdef USE_INSTANCING
         vec4 ip4 = modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
@@ -27,7 +25,6 @@ export function fogPatch(mat, shared, lo = 0.66, hi = 0.82, sway = false) {
       #endif
         float pvis = smoothstep(${lo.toFixed(2)}, ${hi.toFixed(2)}, fogField(ip4.xz)) * uPropVis;
         transformed *= pvis;
-        vPW = ip4.xz;
       ${sway ? `#ifdef USE_INSTANCING
         float gust = 0.55 + 0.45 * sin(dot(ip4.xz, vec2(0.11, 0.07)) - uTime * 1.1);
         float swy = (sin(uTime * 1.7 + ip4.x * 0.9 + ip4.z * 0.6) * 0.6 + sin(uTime * 3.1 + ip4.z * 1.3) * 0.25 + 0.35) * gust;
@@ -35,11 +32,6 @@ export function fogPatch(mat, shared, lo = 0.66, hi = 0.82, sway = false) {
         mat3 im3 = mat3(instanceMatrix);
         transformed += transpose(im3) * windW / max(dot(im3[0], im3[0]), 1e-4) * pvis;
       #endif` : ''}`);
-    if (lit) {
-      sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>\n${GLSL_COMMON}\nvarying vec2 vPW;`)
-        .replace('#include <aomap_fragment>', 'float cS = cloudShade(vPW); reflectedLight.directDiffuse *= cS; reflectedLight.directSpecular *= cS;\n#include <aomap_fragment>');
-    }
   };
   return mat;
 }

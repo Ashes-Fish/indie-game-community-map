@@ -152,7 +152,7 @@ const FRAG_MAIN = /* glsl */`
   float rev = smoothstep(0.475, 0.525, fv);
 
   vec3 col = vec3(0.0), emis = vec3(0.0), nS = vec3(0.0, 1.0, 0.0);
-  float rough = 0.9, cloudK = 1.0;
+  float rough = 0.9;
   if (rev > 0.001) {
   vec3 nT = normalize(texture2D(uNormalTex, uvH).xyz * 2.0 - 1.0);
   float hM = vH0 > 0.0 ? 1000.0 * pow(vH0 / EXAG, 1.0 / EXPO) : 0.0;
@@ -359,7 +359,6 @@ const FRAG_MAIN = /* glsl */`
     col *= 1.0 + 0.08 * uHi;
     emis += ${S('#ffb733')} * e * 0.35 * pulse * uHi;
   }
-  cloudK = cloudShade(p);
   }
 
   // ---- fog of war: paper map ----
@@ -398,7 +397,6 @@ const FRAG_MAIN = /* glsl */`
   tRough = mix(1.0, rough, rev);
   tN = normalize(mix(vec3(0.0, 1.0, 0.0), nS, clamp(rev * vLift, 0.0, 1.0)));
   tEmis = emis * max(rev, 0.0) + ${S('#ff7a2a')} * smoothstep(0.455, 0.474, fv) * (1.0 - rev) * (0.3 + 0.35 * (0.6 + 0.4 * sin(uTime * 2.0 + p.x * 0.7)));
-  tCloud = mix(1.0, cloudK, rev);
 `;
 
 export function makeTerrainMaterial(shared, mobile) {
@@ -418,11 +416,10 @@ export function makeTerrainMaterial(shared, mobile) {
         vLift = liftV;`);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>\n${FRAG_PARS}`)
-      .replace('#include <color_fragment>', `#include <color_fragment>\nfloat tRough; vec3 tN; vec3 tEmis; float tCloud;\n${FRAG_MAIN}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>\nfloat tRough; vec3 tN; vec3 tEmis;\n${FRAG_MAIN}`)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = tRough;')
       .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(tN, 0.0)).xyz);')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += tEmis;')
-      .replace('#include <aomap_fragment>', 'reflectedLight.directDiffuse *= tCloud; reflectedLight.directSpecular *= tCloud;\n#include <aomap_fragment>');
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += tEmis;');
   };
   return mat;
 }
