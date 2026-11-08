@@ -3,6 +3,9 @@ import { XMIN, XMAX, ZMIN, ZMAX, EXAG, EXP, rng } from './config.js';
 import { GLSL_COMMON } from './glsl.js';
 import { loadImage } from './world.js';
 
+// territory colour slots (index 0 = no owner), so at most MAX_OWNERS - 1 cities in one map
+export const MAX_OWNERS = 32;
+
 const S = (hex) => { const c = new THREE.Color(hex); return `vec3(${c.r.toFixed(4)},${c.g.toFixed(4)},${c.b.toFixed(4)})`; };
 // mean colour of each painted layer (sRGB 0-255, printed by scripts/paint_textures.py) → used to re-tint the layers
 const M = (r, g, b) => { const c = new THREE.Color().setRGB(r / 255, g / 255, b / 255, THREE.SRGBColorSpace); return `vec3(${c.r.toFixed(4)},${c.g.toFixed(4)},${c.b.toFixed(4)})`; };
@@ -58,8 +61,8 @@ uniform sampler2D uNormalTex;
 uniform sampler2D uInk;
 uniform sampler2DArray uTerr;
 uniform sampler2D uRipple;
-uniform vec3 uOwnCol[8];
-uniform vec3 uOwnCol2[8];
+uniform vec3 uOwnCol[${MAX_OWNERS}];
+uniform vec3 uOwnCol2[${MAX_OWNERS}];
 uniform vec2 uHiHex;
 uniform float uHi;
 uniform float uGrid;

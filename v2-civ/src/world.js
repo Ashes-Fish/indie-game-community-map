@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import {
-  XMIN, ZMIN, XMAX, ZMAX, HW, HH, WW, WH, HMAX, elevToY, HEX_R, HEX_N, HEX_DIRS, REGION,
+  XMIN, ZMIN, XMAX, ZMAX, HW, HH, WW, WH, HMAX, elevToY, HEX_R, HEX_W, HEX_N, HEX_DIRS, REGION,
   hexCenter, hexIndex, hexFromIndex, worldToHex, toWorld, hexDist, hash2,
 } from './config.js';
+import { layoutCities } from './layout.js';
 
 export const BIOME = { OCEAN: 0, COAST: 1, LAKE: 2, GRASS: 3, PLAINS: 4, FARM: 5, WOOD: 6, HILLS: 7, MOUNTAIN: 8, MARSH: 9, URBAN: 10, DISTRICT: 11 };
 export const FLAG = { CITY: 1, DISTRICT: 2, WONDER: 4, RIVERSIDE: 8 };
@@ -77,7 +78,7 @@ export class World {
   }
 
   // ---------- hexes ----------
-  buildHexes(cities, communities) {
+  buildHexes(cities, communities, pins) {
     const N = HEX_N * HEX_N;
     const hx = this.hex = new Array(N);
     const inRegion = (x, z) => {
@@ -106,48 +107,18 @@ export class World {
         biome: 0, owner: 0, order: 255, flags: 0, inRegion: inRegion(cx, cz), rnd: hash2(q * 7 + 3, r * 13 + 5),
       };
     }
-    // cities & districts
-    const cityHex = cities.map((c) => {
+    // cities, territory and district sites (layout.js)
+    for (const c of cities) {
       const [x, z] = toWorld(c.lon, c.lat);
-      const h = worldToHex(x, z);
-      c.hex = h; [c.x, c.z] = hexCenter(h[0], h[1]);
+      c.hex = worldToHex(x, z); [c.x, c.z] = hexCenter(c.hex[0], c.hex[1]);
       c.y = this.heightY(c.x, c.z);
-      return h;
-    });
-    const taken = new Set(cityHex.map((h) => hexIndex(h[0], h[1])));
-    for (const cm of communities) {
-      const city = cities.find((c) => c.id === cm.cityId);
-      let best = null, bestS = -1e9;
-      const toward = cm.toward ? toWorld(cm.toward[0], cm.toward[1]) : null;
-      HEX_DIRS.forEach(([dq, dr], k) => {
-        const q = city.hex[0] + dq, r = city.hex[1] + dr, idx = hexIndex(q, r);
-        if (taken.has(idx)) return;
-        const h = hx[idx];
-        const [cx, cz] = hexCenter(q, r);
-        let s = -h.waterFrac * 6;
-        if (toward) {
-          const vx = toward[0] - city.x, vz = toward[1] - city.z, l = Math.hypot(vx, vz) || 1;
-          const ux = cx - city.x, uz = cz - city.z, lu = Math.hypot(ux, uz);
-          s += (vx * ux + vz * uz) / (l * lu) * 2;
-        } else if (cm.prefDir != null) s += k === cm.prefDir ? 1.5 : 0;
-        s -= h.slope * 0.5;
-        if (s > bestS) { bestS = s; best = [q, r]; }
-      });
-      cm.hex = best; taken.add(hexIndex(best[0], best[1]));
-      [cm.x, cm.z] = hexCenter(best[0], best[1]);
-      cm.y = this.heightY(cm.x, cm.z);
     }
-
-    // territory owners
-    for (const h of hx) {
-      let bestD = 99, owner = 0;
-      cities.forEach((c, ci) => {
-        const d = hexDist([h.q, h.r], c.hex);
-        if (d <= c.radius && d < bestD) { bestD = d; owner = ci + 1; }
-      });
-      h.owner = owner;
+    this.sites = layoutCities(hx, cities, communities, pins);
+    for (const s of this.sites) { s.y = this.heightY(s.x, s.z); for (const cm of s.members) cm.y = s.y; }
+    for (const s of this.sites) {
+      const h = hx[hexIndex(s.hex[0], s.hex[1])];
+      h.owner = cities.findIndex((c) => c.id === s.cityId) + 1; h.flags |= FLAG.DISTRICT;
     }
-    for (const cm of communities) { const h = hx[hexIndex(cm.hex[0], cm.hex[1])]; h.owner = cities.findIndex((c) => c.id === cm.cityId) + 1; h.flags |= FLAG.DISTRICT; }
     cities.forEach((c) => { hx[hexIndex(c.hex[0], c.hex[1])].flags |= FLAG.CITY; });
 
     // reveal order (km to the revealed boundary; negative = inside)
@@ -209,7 +180,7 @@ export class World {
       if (near || h.waterFrac < 0.95) h.biome = BIOME.COAST;
     }
     cities.forEach((c) => { const h = hx[hexIndex(c.hex[0], c.hex[1])]; h.biome = BIOME.URBAN; });
-    communities.forEach((c) => { const h = hx[hexIndex(c.hex[0], c.hex[1])]; h.biome = BIOME.DISTRICT; });
+    this.sites.forEach((s) => { hx[hexIndex(s.hex[0], s.hex[1])].biome = BIOME.DISTRICT; });
 
     const data = new Uint8Array(N * 4);
     for (const h of hx) {
@@ -233,6 +204,8 @@ export class World {
       { a: C.changshu, b: C.shanghai, rad: 34 },
       { a: C.hangzhou, b: W(119.4, 30.3), rad: 32 }, { a: W(119.4, 30.3), b: W(118.75, 30.15), rad: 28 },
       { a: W(118.75, 30.15), b: W(118.17, 30.13), rad: 28 }, { a: W(118.17, 30.13), rad: 36 },
+      // always reveal a city's whole territory, however large it grows
+      ...cities.map((c) => ({ a: [c.x, c.z], rad: (c.radius + 1.6) * HEX_W })),
     ];
   }
 

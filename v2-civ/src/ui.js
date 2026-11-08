@@ -1,20 +1,22 @@
 import * as THREE from 'three';
 import { parseContact } from './data.js';
 import { icon, FRAME, FRAME_S } from './icons.js';
+import { modelLabel, FEATURES } from './models.js';
 
 const h = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+const BANNER_ICONS = 6; // the rest show as "+N"; the full list is in the 社团列表 panel
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 export class UI {
-  constructor({ cities, communities, base, onPick, onCity, onReplay, mobile }) {
+  constructor({ cities, communities, sites, base, onPick, onSite, onCity, onReplay, mobile }) {
     this.root = document.getElementById('ui');
     this.root.style.setProperty('--frame', FRAME);
     this.root.style.setProperty('--frame-s', FRAME_S);
     this.cities = cities; this.comms = communities; this.base = base; this.mobile = mobile;
-    this.onPick = onPick; this.onCity = onCity;
+    this.onPick = onPick; this.onSite = onSite; this.onCity = onCity;
     const logoSrc = (c) => (c.logo ? `${base}logos/${c.logo}.webp` : null);
     this.logoSrc = logoSrc;
-    const logo = (c) => (c.logo ? `<img src="${logoSrc(c)}" alt="">` : `<span class="ph">存</span>`);
+    const logo = (c) => (c.logo ? `<img src="${logoSrc(c)}" alt="">` : `<span class="ph">${esc(c.glyph)}</span>`);
     this.icon = logo;
     document.body.appendChild(h('div', 'vignette'));
 
@@ -42,21 +44,25 @@ export class UI {
     // banners
     this.banners = cities.map((city) => {
       const cs = communities.filter((c) => c.cityId === city.id || (c.otherCities || '').includes(city.name));
-      const el = h('div', 'banner', `<div class="bar"><div class="pop">${cs.length}</div><div class="nm">${city.name}</div></div><div class="icons">${cs.map(logo).join('')}</div>`);
+      const el = h('div', 'banner', `<div class="bar"><div class="pop">${cs.length}</div><div class="nm">${city.name}</div>${city.tier && city.radius !== 2 ? `<div class="tier">${city.tier.name}</div>` : ''}</div><div class="icons">${cs.slice(0, BANNER_ICONS).map(logo).join('')}${cs.length > BANNER_ICONS ? `<span class="more">+${cs.length - BANNER_ICONS}</span>` : ''}</div>`);
       el.style.setProperty('--c', city.color);
       el.querySelector('.bar').onclick = (e) => { e.stopPropagation(); onCity(city); };
-      el.querySelectorAll('.icons > *').forEach((ic, i) => { ic.style.cursor = 'pointer'; ic.onclick = (e) => { e.stopPropagation(); onPick(cs[i], true); }; });
+      el.querySelectorAll('.icons > :not(.more)').forEach((ic, i) => { ic.style.cursor = 'pointer'; ic.onclick = (e) => { e.stopPropagation(); onPick(cs[i], true); }; });
       this.root.appendChild(el);
       return { el, city, pos: new THREE.Vector3(city.x, city.y + 5.2, city.z) };
     });
-    // district tags
-    this.tags = communities.map((c) => {
-      const el = h('div', 'dtag', `${logo(c)}<span class="nm">${esc(c.short || c.name)}</span>`);
-      el.onclick = (e) => { e.stopPropagation(); onPick(c, true); };
+    // district tags: one per hex; a cluster hex shows its lead community plus a count
+    this.tags = sites.map((s) => {
+      const c = s.members[0], n = s.members.length;
+      const el = h('div', 'dtag' + (n > 1 ? ' cluster' : ''), `${logo(c)}<span class="nm">${esc(n > 1 ? `${c.short || c.name} 等` : c.short || c.name)}</span>${n > 1 ? `<b class="cnt">${n}</b>` : ''}`);
+      el.onclick = (e) => { e.stopPropagation(); onSite(s, true); };
       this.root.appendChild(el);
-      return { el, c, pos: new THREE.Vector3(c.x, c.y + 4.4, c.z), shown: false };
+      return { el, c, s, pos: new THREE.Vector3(s.x, s.y + 4.4, s.z), shown: false };
     });
     this.labels = [];
+    const perCity = {};
+    for (const s of sites) perCity[s.cityId] = (perCity[s.cityId] || 0) + 1;
+    this.dense = new Set(Object.keys(perCity).filter((id) => perCity[id] > 8));
 
     this.tip = h('div', 'tip civ-panel');
     this.root.appendChild(this.tip);
@@ -98,10 +104,12 @@ export class UI {
       if (p.ok) b.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-100%) scale(${sc})`;
     }
     const showTags = dist < 150;
+    // dense cities reveal their tags only when zoomed further in, so names don't pile up
+    const near = (t) => dist < (this.dense.has(t.s.cityId) ? 70 : 150);
     for (const t of this.tags) {
-      const built = buildState ? buildState(t.c) : true;
+      const built = buildState ? t.s.members.some(buildState) : true;
       const p = this.project(t.pos, cam, w, hh);
-      const vis = showTags && p.ok && built;
+      const vis = showTags && near(t) && p.ok && built;
       t.el.style.display = vis ? '' : 'none';
       if (vis) t.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-100%) scale(${THREE.MathUtils.clamp(1.3 - dist / 220, 0.8, 1.15)})`;
     }
@@ -116,7 +124,9 @@ export class UI {
   showTip(c, x, y) {
     if (!c) { this.tip.style.display = 'none'; return; }
     const city = this.cities.find((k) => k.id === c.cityId);
-    this.tip.innerHTML = c.isCity ? `<b>${esc(c.name)}</b> · 点击查看全城` : `<b>${esc(c.name)}</b> · ${esc(city.name)} · 点击查看`;
+    if (c.isCity) this.tip.innerHTML = `<b>${esc(c.name)}</b>${c.tier ? ' · ' + c.tier.name : ''} · 点击查看全城`;
+    else if (c.members.length > 1) this.tip.innerHTML = `<b>${c.members.length} 个社团</b> · ${esc(city.name)} · 点击查看`;
+    else this.tip.innerHTML = `<b>${esc(c.members[0].name)}</b> · ${esc(city.name)} · 点击查看`;
     this.tip.style.display = 'block';
     this.tip.style.transform = `translate(${x + 16}px,${y + 14}px)`;
   }
@@ -144,7 +154,7 @@ export class UI {
     const metaBits = [icon('city') + city.name + (c.otherCities ? ' · ' + esc(c.otherCities) : ''), c.founded ? `成立 ${esc(c.foundedRaw || c.founded)}` : '', c.sizeRaw ? `${icon('pop')}${esc(c.sizeRaw)} 人` : ''].filter(Boolean);
     this.panel.style.setProperty('--civ', city.color);
     this.panel.innerHTML = `
-      <div class="hd">${c.logo ? `<img class="logo" src="${this.logoSrc(c)}" alt="">` : '<div class="logo ph">存</div>'}
+      <div class="hd">${c.logo ? `<img class="logo" src="${this.logoSrc(c)}" alt="">` : `<div class="logo ph">${esc(c.glyph)}</div>`}
         <div><h2>${esc(c.name)}</h2><div class="meta">${metaBits.map((b) => `<span>${b}</span>`).join('')}</div></div>
         <div class="x" title="关闭">${icon('close')}</div></div>
       <div class="bd">
@@ -152,6 +162,9 @@ export class UI {
         <div class="sec">联络</div>
         ${rows.map(([k, v, copy]) => `<div class="row"><div class="k">${k}</div><div class="v">${v}</div>${copy ? `<button class="copy" data-v="${esc(copy)}">${icon('copy')}<span>复制</span></button>` : ''}</div>`).join('')}
         <div class="hint">主理人欢迎同好加好友，添加时备注「社团地图」更容易通过。</div>
+        <div class="sec">据点外观</div>
+        <div class="row"><div class="k">造型</div><div class="v">${esc(modelLabel(c.model))}</div></div>
+        <button class="custom-model" ${FEATURES.customModels ? '' : 'disabled'} title="上传 .glb 模型作为据点外观">自定义据点模型<span>${FEATURES.customModels ? '' : '敬请期待'}</span></button>
       </div>`;
     this.panel.querySelector('.x').onclick = () => this.closePanel();
     this.panel.querySelectorAll('.copy').forEach((b) => {
@@ -166,6 +179,21 @@ export class UI {
     });
     requestAnimationFrame(() => this.panel.classList.add('open'));
     this.openId = c.key;
+  }
+
+  // a hex shared by several communities: list them, each opens its own panel
+  openCluster(s) {
+    const city = this.cities.find((k) => k.id === s.cityId);
+    this.panel.style.setProperty('--civ', city.color);
+    this.panel.innerHTML = `
+      <div class="hd"><div class="logo ph">${s.members.length}</div>
+        <div><h2>${esc(city.name)} · 聚落</h2><div class="meta">这一格聚集了 ${s.members.length} 个社团</div></div>
+        <div class="x" title="关闭">×</div></div>
+      <div class="bd cluster-list">${s.members.map((c, i) => `<div class="item" data-i="${i}">${c.logo ? `<img src="${this.logoSrc(c)}" alt="">` : `<div class="ph">${esc(c.glyph)}</div>`}<div><b>${esc(c.name)}</b><small>${esc(c.intro || '')}</small></div></div>`).join('')}</div>`;
+    this.panel.querySelector('.x').onclick = () => this.closePanel();
+    this.panel.querySelectorAll('.cluster-list .item').forEach((el) => { el.onclick = () => this.openPanel(s.members[+el.dataset.i]); });
+    requestAnimationFrame(() => this.panel.classList.add('open'));
+    this.openId = 'site:' + s.hex.join(',');
   }
   closePanel() { this.panel.classList.remove('open'); this.openId = null; this.onClose && this.onClose(); }
 }

@@ -15,6 +15,9 @@ import { buildClouds } from './clouds.js';
 import { buildSmoke, buildBirds, buildWalkers, livenBuildings } from './life.js';
 import { bakeAO } from './ao.js';
 import { HEX_R, toWorld } from './config.js';
+import { dumpPins } from './layout.js';
+import PINS from './layout-pins.json';
+import { MAX_OWNERS } from './terrain.js';
 
 const BASE = import.meta.env.BASE_URL;
 const qs = new URLSearchParams(location.search);
@@ -77,8 +80,8 @@ const shared = {
     uHex: { value: null }, uRevealB: { value: 0 }, uTime: { value: 0 },
     uWater: { value: null }, uNormalTex: { value: null }, uInk: { value: null },
     uCamDist: { value: 300 }, uGrid: { value: 0.34 }, uTerr: { value: null }, uRipple: { value: null },
-    uOwnCol: { value: Array.from({ length: 8 }, () => new THREE.Color(0, 0, 0)) },
-    uOwnCol2: { value: Array.from({ length: 8 }, () => new THREE.Color(1, 1, 1)) },
+    uOwnCol: { value: Array.from({ length: MAX_OWNERS }, () => new THREE.Color(0, 0, 0)) },
+    uOwnCol2: { value: Array.from({ length: MAX_OWNERS }, () => new THREE.Color(1, 1, 1)) },
     uHiHex: { value: new THREE.Vector2(999, 999) }, uHi: { value: 0 },
   },
 };
@@ -87,7 +90,7 @@ const portrait = innerHeight > innerWidth * 1.15;
 const OVERVIEW = mobile ? (portrait ? { x: 3, z: -2, d: 950 } : { x: -10, z: 5, d: 470 }) : { x: -24, z: -3, d: 462 };
 
 const cam = new CivCamera(camera, canvas, { maxD: OVERVIEW.d + 40, minD: mobile ? 26 : 30 });
-let world, ui, post, trade, hs, dust, beams, props, boats, clouds, smoke, birds, walkers, proxies = [], hovered = null;
+let world, ui, post, trade, hs, dust, beams, props, boats, sites = [], clouds, smoke, birds, walkers, proxies = [], hovered = null;
 
 async function loadLogos() {
   const out = {};
@@ -105,13 +108,14 @@ async function init() {
   shared.uniforms.uTerr.value = terrTex;
   shared.uniforms.uRipple.value = makeRippleTexture();
   progress(0.4, '正在勘定疆界…');
-  world.buildHexes(CITIES, COMMUNITIES);
+  world.buildHexes(CITIES, COMMUNITIES, PINS);
+  sites = world.sites;
   CITIES.forEach((c, i) => { shared.uniforms.uOwnCol.value[i + 1].set(c.color).convertSRGBToLinear(); shared.uniforms.uOwnCol2.value[i + 1].set(c.color2).convertSRGBToLinear(); });
   for (const c of CITIES) world.flatten(c.x, c.z, 4.6);
-  for (const c of COMMUNITIES) world.flatten(c.x, c.z, 3.8);
+  for (const s of sites) world.flatten(s.x, s.z, 3.8);
   world.buildNormalTex();
   for (const c of CITIES) c.y = world.heightY(c.x, c.z);
-  for (const c of COMMUNITIES) c.y = world.heightY(c.x, c.z);
+  for (const s of sites) { s.y = world.heightY(s.x, s.z); for (const c of s.members) c.y = s.y; }
   shared.uniforms.uHex.value = world.hexTex;
   shared.uniforms.uWater.value = world.waterTex;
   shared.uniforms.uNormalTex.value = world.normalTex;
@@ -122,18 +126,18 @@ async function init() {
   await tick();
   progress(0.72, '正在营建城郭…');
   const [hx, hz] = toWorld(118.17, 30.13);
-  const keepOut = [...CITIES.map((c) => ({ x: c.x, z: c.z, r: 5.4 })), ...COMMUNITIES.map((c) => ({ x: c.x, z: c.z, r: 4.3 })), { x: hx, z: hz, r: 7 }];
+  const keepOut = [...CITIES.map((c) => ({ x: c.x, z: c.z, r: 5.4 })), ...sites.map((s) => ({ x: s.x, z: s.z, r: 4.3 })), { x: hx, z: hz, r: 7 }];
   props = buildProps(world, shared, Q, keepOut);
   scene.add(props.group);
   const cityGroup = buildCities(world, CITIES, shared).group;
-  const distGroup = buildDistricts(world, COMMUNITIES, CITIES, shared, logos);
+  const distGroup = buildDistricts(world, sites, CITIES, shared, logos, BASE);
   const westLake = buildWestLake(world, rivers);
   scene.add(cityGroup, distGroup, westLake);
   // baked vertex AO (worker, async — buildings pop in darker a moment later) + cloud shadows / lantern flicker
   if (qs.get('ao') !== '0') {
     const strength = Q.post ? 0.5 : 0.75;   // desktop also has screen-space AO up close
     for (const c of CITIES) bakeAO(c.group, { radius: 0.7, strength });
-    for (const c of COMMUNITIES) bakeAO(c.inner, { radius: 0.8, strength });
+    for (const s of sites) bakeAO(s.inner, { radius: 0.8, strength });
     bakeAO(westLake, { radius: 0.6, strength });
   }
   for (const g of [cityGroup, distGroup, westLake]) livenBuildings(g, shared);
@@ -150,7 +154,8 @@ async function init() {
   birds = buildBirds(world, [{ x: 9, z: -12 }, { x: wlx, z: wlz }, CITIES[3], { x: -20, z: -60 }, CITIES[0], { x: 60, z: 20 }], shared, Q);
   scene.add(smoke.points, walkers.group, birds.mesh);
   const lud = COMMUNITIES.find((c) => c.key === 'ludere');
-  trade = buildTrade(world, lud, CITIES.find((c) => c.id === 'changshu'), shared);
+  trade = lud ? buildTrade(world, lud, CITIES.find((c) => c.id === 'changshu'), shared)
+    : { group: new THREE.Group(), mat: { uniforms: { uA: { value: 0 } } }, update() {} };
   scene.add(trade.group);
   boats = buildBoats(world, rivers.rivers.find((r) => r.name === 'canal'));
   scene.add(boats.group);
@@ -163,12 +168,12 @@ async function init() {
   // pick proxies
   const pmat = new THREE.MeshBasicMaterial({ visible: false });
   const pgeo = new THREE.CylinderGeometry(HEX_R * 0.92, HEX_R * 0.92, 9, 6).rotateY(Math.PI / 6);
-  for (const c of COMMUNITIES) { const m = new THREE.Mesh(pgeo, pmat); m.position.set(c.x, c.y + 2, c.z); m.userData.c = c; proxies.push(m); scene.add(m); }
+  for (const s of sites) { const m = new THREE.Mesh(pgeo, pmat); m.position.set(s.x, s.y + 2, s.z); m.userData.site = s; proxies.push(m); scene.add(m); }
   for (const c of CITIES) { const m = new THREE.Mesh(pgeo, pmat); m.position.set(c.x, c.y + 2, c.z); m.userData.city = c; proxies.push(m); scene.add(m); }
 
   ui = new UI({
-    cities: CITIES, communities: COMMUNITIES, base: BASE, mobile,
-    onPick: (c, fly) => select(c, fly), onCity: (city) => focusCity(city), onReplay: () => startIntro(true),
+    cities: CITIES, communities: COMMUNITIES, sites, base: BASE, mobile,
+    onPick: (c, fly) => select(c, fly), onSite: (s, fly) => selectSite(s, fly), onCity: (city) => focusCity(city), onReplay: () => startIntro(true),
   });
   ui.onClose = () => { selected = null; };
   ui.addLabel('太 湖', 9, 0.6, -12, 'water');
@@ -187,7 +192,8 @@ async function init() {
   }
   progress(0.95, '即将完成…');
   renderer.compile(scene, camera);
-  window.__dbg = { world, scene, cam, shared, renderer, camera, COMMUNITIES, CITIES, select, focusCity, intro, perf, get post() { return post; } };
+  // window.__dbg.pins() prints the snapshot to commit as src/layout-pins.json after adding communities
+  window.__dbg = { world, scene, cam, shared, renderer, camera, COMMUNITIES, CITIES, sites, select, focusCity, intro, updateIntro, perf, pins: () => JSON.stringify(dumpPins(CITIES, COMMUNITIES), null, 2), get post() { return post; } };
   start();
 }
 
@@ -209,6 +215,13 @@ function select(c, fly) {
   if (fly) { const o = panelOffset(); cam.flyTo(c.x + o.dx, c.z + o.dz, o.d, 1.5, 0); }
   ui.openPanel(c);
 }
+// a single-community hex opens that community; a cluster hex opens its member list
+function selectSite(s, fly) {
+  if (s.members.length === 1) return select(s.members[0], fly);
+  selected = s;
+  if (fly) { const o = panelOffset(); cam.flyTo(s.x + o.dx, s.z + o.dz, o.d, 1.5, 0); }
+  ui.openCluster(s);
+}
 function focusCity(city) {
   cam.flyTo(city.x, city.z + 4, 70, 1.4, 0);
 }
@@ -216,16 +229,16 @@ cam.onTap = (x, y) => {
   if (!ui) return;
   ui.list.classList.remove('open');
   const u = pick(x, y);
-  if (u && u.c) select(u.c, true);
+  if (u && u.site) selectSite(u.site, true);
   else if (u && u.city) focusCity(u.city);
   else if (ui.openId) ui.closePanel();
 };
 cam.onHover = (x, y) => {
   if (!ui || mobile) return;
   const u = x < 0 ? null : pick(x, y);
-  hovered = u && u.c ? u.c : null;
+  hovered = u && u.site ? u.site : null;
   canvas.style.cursor = u ? 'pointer' : 'grab';
-  ui.showTip(u ? (u.c || { ...u.city, isCity: true }) : null, x, y);
+  ui.showTip(u ? (u.site || { ...u.city, isCity: true }) : null, x, y);
 };
 
 // ---------- intro: fog reveal, then a short camera tour while districts are built ----------
@@ -242,8 +255,24 @@ const SCRIPT = [
   [13.5, 'home', 1.6], [15.2, 'end', null],
 ];
 const buildAt = {};
+// communities added later (uploads) are built just after the tour stop of their city, or at the end
+function introScript() {
+  const out = SCRIPT.filter(([, type, arg]) => type !== 'build' || K(arg));
+  const scripted = new Set(out.filter((e) => e[1] === 'build').map((e) => e[2]));
+  const extra = COMMUNITIES.filter((c) => !scripted.has(c.key));
+  const byCity = {};
+  for (const c of extra) (byCity[c.cityId] ||= []).push(c);
+  for (const [cityId, cs] of Object.entries(byCity)) {
+    const stop = out.find((e) => e[1] === 'fly' && e[2][0] === cityId);
+    const t0 = stop ? stop[0] + 1.2 : 13.0, span = stop ? 1.2 : 1.6;
+    cs.forEach((c, i) => out.push([t0 + (span * i) / cs.length, 'build', c.key, cs.length > 3]));
+  }
+  return out.sort((a, b) => a[0] - b[0]);
+}
+let SCRIPT_RUN = SCRIPT;
 function startIntro() {
   intro.t = 0; intro.on = true; intro.built.clear(); intro.done.clear(); intro.userTook = false;
+  SCRIPT_RUN = introScript();
   for (const c of COMMUNITIES) { c.inner.scale.set(0.001, 0.001, 0.001); c.flag.scale.set(1, 0.001, 1); }
   trade.mat.uniforms.uA.value = 0;
   shared.uniforms.uRevealB.value = 0;
@@ -271,7 +300,7 @@ function updateIntro(dt) {
   const u = Math.min(1, t / T_REVEAL);
   shared.uniforms.uRevealB.value = (1 - Math.pow(1 - u, 2.4)) * REVEAL_FINAL;
   hs.group.scale.setScalar(Math.max(0.001, Math.min(1, (t - T_REVEAL * 0.6) / 0.8)));
-  SCRIPT.forEach(([t0, type, arg], i) => {
+  SCRIPT_RUN.forEach(([t0, type, arg, quiet], i) => {
     if (t < t0 || intro.done.has(i)) return;
     intro.done.add(i);
     if (type === 'fly' && !intro.userTook) { const sh = tourShot(C(arg[0])); cam.flyTo(sh.x, sh.z, sh.d, arg[1]); }
@@ -282,8 +311,7 @@ function updateIntro(dt) {
       intro.built.add(c.key);
       const k = THREE.MathUtils.clamp(cam.dist / 110, 1, 4);
       dust.burst(c.x, c.y, c.z, mobile ? 40 : 70, 3.2 * Math.sqrt(k));
-      beams.spawn(c.x, c.y, c.z, k);
-      ui.toast(c);
+      if (!quiet) { beams.spawn(c.x, c.y, c.z, k); ui.toast(c); }
     }
     if (type === 'end') intro.on = false;
   });
@@ -322,7 +350,7 @@ function start() {
   const op = qs.get('open');
   if (op) {
     const c = COMMUNITIES.find((k) => k.key === op);
-    if (c) { finishIntroNow(); select(c, false); const o = panelOffset(); cam.fly = null; cam.target.set(c.x + o.dx, 0, c.z + o.dz); cam.dist = cam.goalDist = o.d; cam.apply(); }
+    if (c) { finishIntroNow(); selectSite(c.site, false); const o = panelOffset(); cam.fly = null; cam.target.set(c.x + o.dx, 0, c.z + o.dz); cam.dist = cam.goalDist = o.d; cam.apply(); }
   }
   renderer.setAnimationLoop(frame);
   if (qs.has('bench')) {

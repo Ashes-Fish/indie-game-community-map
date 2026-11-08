@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { Builder, makeMaterials } from './kit.js';
 import { HEX_R, rng } from './config.js';
 import { ASSET, glbSlot } from './assets.js';
+import { registerModelKind, buildModel } from './models.js';
 
 const C = {
   wall: '#8f8778', wallTop: '#6c665c', red: '#b5392e', redD: '#8e2a22', roof: '#3e4652', roofD: '#2f353f',
@@ -10,8 +11,10 @@ const C = {
 };
 
 function cityCenter(b, city, R) {
-  const big = city.id === 'nanjing' || city.id === 'shanghai' || city.id === 'hangzhou';
-  const L = big ? 6.6 : 5.6, H = big ? 0.78 : 0.62, T = 0.42;
+  // walls grow with the city tier; radius 2 keeps the original sizes
+  const grow = Math.max(0, (city.radius || 2) - 2);
+  const L = (city.big ? 6.6 : 5.6) + Math.min(grow, 2) * 0.6, H = (city.big ? 0.78 : 0.62) + grow * 0.06, T = 0.42;
+  if (city.radius >= 4) outerWall(b, L + 1.5, H * 0.75);
   b.cyl(L * 0.78, L * 0.84, 0.35, 6, '#a3967a', 0, -0.3, 0, 'std', Math.PI / 6);
   // walls with gate gaps
   const gap = 1.25;
@@ -63,6 +66,21 @@ function cityCenter(b, city, R) {
     b.sphere(0.32 + R() * 0.12, R() < 0.5 ? '#4f8a2c' : '#3d7a30', Math.cos(a) * r, 0.5, Math.sin(a) * r, 'std', 0);
   }
   return L;
+}
+
+// 外郭: a lower outer ring wall for large cities (radius >= 4)
+function outerWall(b, L, H) {
+  for (let s = 0; s < 4; s++) {
+    const ry = (s * Math.PI) / 2, seg = (L - 1.0) / 2;
+    for (const k of [-1, 1]) {
+      const off = k * (0.5 + seg / 2);
+      const x = Math.cos(ry) * off + Math.sin(ry) * (L / 2), z = -Math.sin(ry) * off + Math.cos(ry) * (L / 2);
+      b.box(seg, H, 0.3, C.stoneD, x, 0, z, ry);
+      b.box(seg, 0.06, 0.36, C.wallTop, x, H, z, ry);
+    }
+    const cx = (s & 1 ? 1 : -1) * L / 2, cz = (s & 2 ? 1 : -1) * L / 2;
+    b.box(0.6, H + 0.2, 0.6, C.stoneD, cx, 0, cz);
+  }
 }
 
 function landmark(b, city, L, R) {
@@ -280,7 +298,7 @@ function makeFlagTexture(cm, color, img) {
   } else {
     g.fillStyle = '#1b2a48'; g.beginPath(); g.roundRect(x, y, S, S, 12); g.fill();
     g.fillStyle = '#f2cf72'; g.font = '700 84px "Songti SC","STSong","Noto Serif SC",serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText('存', 128, 90);
+    g.fillText(cm.glyph || '社', 128, 90);
   }
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
@@ -313,27 +331,44 @@ export function makeFlag(cm, color, img, shared) {
   return grp;
 }
 
-export function buildDistricts(world, communities, cities, shared, logos) {
+registerModelKind('builtin', (m, cm) => {
+  // ?asset=a|b: the guild style uses the GLB version (its base stays aligned to the hex grid, no twist)
+  if (ASSET !== 'old' && m.style === 'guild') return glbSlot('guild');
+  const R = rng(cm.key.length * 977 + 13);
+  const b = new Builder();
+  (STYLES[m.style] || STYLES.guild)(b, R);
+  const g = b.build(makeMaterials());
+  // orient the compound to face the camera (south) with a slight random twist
+  g.rotation.y = (R() - 0.5) * 0.25;
+  return g;
+});
+
+// flag spots around a district hex: the first is the site's own flag, the rest are for cluster members
+const FLAG_SPOTS = [[2.7, 2.0, -0.35], [-2.8, 1.9, 0.35], [2.6, -2.3, -0.6], [-2.6, -2.3, 0.6]];
+
+export function buildDistricts(world, sites, cities, shared, logos, base) {
   const group = new THREE.Group();
-  for (const cm of communities) {
-    const city = cities.find((c) => c.id === cm.cityId);
-    const R = rng(cm.key.length * 977 + 13);
-    const b = new Builder();
-    const glb = ASSET !== 'old' && cm.style === 'guild';
-    if (!glb) STYLES[cm.style](b, R);
-    const mats = makeMaterials();
-    const g = glb ? glbSlot('guild') : b.build(mats);
+  for (const site of sites) {
+    const city = cities.find((c) => c.id === site.cityId);
+    const [lead] = site.members;
     const holder = new THREE.Group();
-    holder.add(g);
-    // orient the compound to face the camera (south) with a slight random twist (GLB bases stay aligned to the hex grid)
-    g.rotation.y = (R() - 0.5) * 0.25;
-    if (glb) g.rotation.y = 0;
-    const flag = makeFlag(cm, city.color, logos[cm.logo], shared);
-    flag.position.set(2.7, 0, 2.0);
-    flag.rotation.y = -0.35;
-    holder.add(flag);
-    holder.position.set(cm.x, world.heightY(cm.x, cm.z) - 0.02, cm.z);
-    cm.group = holder; cm.inner = g; cm.flag = flag; cm.mats = mats;
+    const inner = new THREE.Group();
+    inner.add(buildModel(lead, { base }));
+    holder.add(inner);
+    site.members.forEach((cm, i) => {
+      const [fx, fz, fr] = FLAG_SPOTS[i % FLAG_SPOTS.length];
+      const flag = makeFlag(cm, city.color, logos[cm.logo], shared);
+      // cluster members' flags sit in a smaller wrapper so the intro can still animate flag.scale
+      const node = i ? new THREE.Group().add(flag) : flag;
+      if (i) node.scale.setScalar(0.82);
+      node.position.set(fx, 0, fz);
+      node.rotation.y = fr;
+      node.visible = i < FLAG_SPOTS.length; // beyond four the panel lists them
+      holder.add(node);
+      cm.group = holder; cm.inner = inner; cm.flag = flag;
+    });
+    holder.position.set(site.x, world.heightY(site.x, site.z) - 0.02, site.z);
+    site.group = holder; site.inner = inner;
     group.add(holder);
   }
   return group;
