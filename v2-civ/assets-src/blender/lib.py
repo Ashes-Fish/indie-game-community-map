@@ -1,4 +1,4 @@
-# 公用工具：材质、基本体、中式屋顶、烘焙、导出。Blender 5.2，-b 无界面运行。
+# 公用工具：材质、基本体、中式屋顶、烘焙、导出。Blender 4.5 / 5.x，-b 无界面运行。
 # 约定：Blender 单位 = 地图世界单位；Z 向上；正面朝 -Y（导出 glTF 后即地图的南 / +Z，镜头一侧）。
 import math
 import os
@@ -70,12 +70,12 @@ def _math(nt, op, a, b=0.0, c=0.0, clamp=False):
 def MAT(name):
     if name in MATS:
         return MATS[name]
-    if name == 'lantern':  # 发光件不烘焙，单独材质
-        m = bpy.data.materials.new('lantern')
+    if name == 'lantern' or name.startswith('glow_'):  # 发光件（灯笼、霓虹、屏幕）不烘焙，单独材质
+        m = bpy.data.materials.new(name)
         m.use_nodes = True
         b = m.node_tree.nodes['Principled BSDF']
-        b.inputs['Base Color'].default_value = lin(PAL['lantern'])
-        b.inputs['Emission Color'].default_value = lin(PAL['lantern'])
+        b.inputs['Base Color'].default_value = lin(PAL[name])
+        b.inputs['Emission Color'].default_value = lin(PAL[name])
         b.inputs['Emission Strength'].default_value = 2.5
         b.inputs['Roughness'].default_value = 0.9
         MATS[name] = m
@@ -117,7 +117,7 @@ def MAT(name):
         groove = tuple(x * 0.55 for x in col[:3]) + (1,)
         ridge = tuple(min(1, x * 1.3) for x in col[:3]) + (1,)
         c = _mix(nt, _mix(nt, groove, ridge, f), c, 0.25)
-    if kind in ('stone', 'paving', 'lattice'):
+    if kind in ('stone', 'paving', 'lattice', 'glass', 'brick', 'plank'):
         br = N.new('ShaderNodeTexBrick')
         mp = N.new('ShaderNodeMapping')
         nt.links.new(tc.outputs['Object'], mp.inputs['Vector'])
@@ -131,6 +131,24 @@ def MAT(name):
             br.inputs['Scale'].default_value = 1.0
             br.inputs['Brick Width'].default_value = 0.42
             br.inputs['Row Height'].default_value = 0.14
+        elif kind in ('glass', 'brick', 'plank'):  # 现代立面：横向坐标取立面朝向的那根轴，斜面也不拉丝
+            sep = N.new('ShaderNodeSeparateXYZ')
+            nt.links.new(tc.outputs['Object'], sep.inputs['Vector'])
+            nsep = N.new('ShaderNodeSeparateXYZ')
+            nt.links.new(geo.outputs['Normal'], nsep.inputs['Vector'])
+            faces_x = _math(nt, 'GREATER_THAN', _math(nt, 'ABSOLUTE', nsep.outputs['X']), _math(nt, 'ABSOLUTE', nsep.outputs['Y']))
+            u = _math(nt, 'ADD', _math(nt, 'MULTIPLY', sep.outputs['Y'], faces_x),
+                      _math(nt, 'MULTIPLY', sep.outputs['X'], _math(nt, 'SUBTRACT', 1.0, faces_x)))
+            comb = N.new('ShaderNodeCombineXYZ')
+            nt.links.new(u, comb.inputs['X'])
+            nt.links.new(sep.outputs['Z'], comb.inputs['Y'])
+            nt.links.new(comb.outputs['Vector'], br.inputs['Vector'])
+            br.inputs['Scale'].default_value = 1.0
+            br.offset = 0.0 if kind == 'glass' else 0.5
+            # 玻璃幕墙：一格约一层楼一扇窗；砖：小砖；木板：长条横向挂板
+            bw, rh = {'glass': (0.2, 0.16), 'brick': (0.14, 0.06), 'plank': (0.9, 0.085)}[kind]
+            br.inputs['Brick Width'].default_value = bw
+            br.inputs['Row Height'].default_value = rh
         elif kind == 'paving':
             nt.links.new(mp.outputs['Vector'], br.inputs['Vector'])
             br.inputs['Scale'].default_value = 1.0
@@ -143,12 +161,24 @@ def MAT(name):
             br.inputs['Brick Width'].default_value = 0.07
             br.inputs['Row Height'].default_value = 0.07
             br.offset = 0.0
-        br.inputs['Mortar Size'].default_value = 0.012 if kind != 'lattice' else 0.014
+        br.inputs['Mortar Size'].default_value = {'lattice': 0.014, 'glass': 0.024, 'brick': 0.01, 'plank': 0.008}.get(kind, 0.012)
         br.inputs['Color1'].default_value = col
-        br.inputs['Color2'].default_value = tuple(x * 0.9 for x in col[:3]) + (1,)
-        mortar = tuple(x * (0.62 if kind != 'lattice' else 1.9) for x in col[:3]) + (1,)
-        br.inputs['Mortar'].default_value = tuple(min(1, x) for x in mortar)
-        c = _mix(nt, br.outputs['Color'], c, 0.35)
+        br.inputs['Color2'].default_value = tuple(min(1, x * (1.25 if kind == 'glass' else 0.9)) for x in col[:3]) + (1,)
+        if kind == 'glass':  # 浅色窗框
+            br.inputs['Mortar'].default_value = lin(PAL.get('mullion', '#dde3e8'))
+        else:
+            mortar = tuple(x * {'lattice': 1.9, 'brick': 1.6, 'plank': 0.55}.get(kind, 0.62) for x in col[:3]) + (1,)
+            br.inputs['Mortar'].default_value = tuple(min(1, x) for x in mortar)
+        c = _mix(nt, br.outputs['Color'], c, {'glass': 0.9, 'brick': 0.65, 'plank': 0.6}.get(kind, 0.35))
+    if kind == 'glass':  # 幕墙下暗上亮：天空反光
+        sep = N.new('ShaderNodeSeparateXYZ')
+        nt.links.new(geo.outputs['Position'], sep.inputs['Vector'])
+        mr = N.new('ShaderNodeMapRange')
+        nt.links.new(sep.outputs['Z'], mr.inputs['Value'])
+        mr.inputs['From Min'].default_value = WALL_Z0[0]
+        mr.inputs['From Max'].default_value = WALL_Z0[0] + 5.0
+        sky = tuple(min(1, x * 1.45 + 0.05) for x in col[:3]) + (1,)
+        c = _mix(nt, c, _mix(nt, c, sky, 0.6), mr.outputs['Result'])
     if kind == 'wall':  # 墙脚脏旧渐变
         sep = N.new('ShaderNodeSeparateXYZ')
         nt.links.new(geo.outputs['Position'], sep.inputs['Vector'])
@@ -408,15 +438,21 @@ def tri_count(ob):
 def setup_cycles(samples=64):
     sc = bpy.context.scene
     sc.render.engine = 'CYCLES'
-    try:
-        prefs = bpy.context.preferences.addons['cycles'].preferences
-        prefs.compute_device_type = 'METAL'
-        prefs.get_devices()
-        for d in prefs.devices:
-            d.use = True
-        sc.cycles.device = 'GPU'
-    except Exception as e:  # noqa
-        print('Metal 不可用，用 CPU', e)
+    sc.cycles.device = 'CPU'
+    prefs = bpy.context.preferences.addons['cycles'].preferences
+    for kind in ('METAL', 'OPTIX', 'CUDA', 'HIP'):  # macOS / NVIDIA / AMD；都没有就用 CPU
+        try:
+            prefs.compute_device_type = kind
+            prefs.get_devices()
+            gpus = [d for d in prefs.devices if d.type == kind]
+            if gpus:
+                for d in gpus:
+                    d.use = True
+                sc.cycles.device = 'GPU'
+                break
+        except Exception:  # noqa
+            continue
+    print('Cycles 设备：', sc.cycles.device)
     sc.cycles.samples = samples
     if sc.world is None:
         sc.world = bpy.data.worlds.new('W')
@@ -512,7 +548,7 @@ def bake_and_export(name, out_dir, size=1024, ao_dist=0.9, ao_strength=0.85, ext
 def render_preview(path, objs=None, res=900, elev=38, azim=0, dist=None, target=None):
     """快速用 EEVEE 渲一张预览（地图镜头方向：从南面斜上方看）。"""
     sc = bpy.context.scene
-    sc.render.engine = 'BLENDER_EEVEE'
+    sc.render.engine = 'BLENDER_EEVEE' if bpy.app.version >= (5, 0, 0) else 'BLENDER_EEVEE_NEXT'  # 4.2–4.5 叫 EEVEE_NEXT
     sc.render.resolution_x = res
     sc.render.resolution_y = res
     sc.render.film_transparent = False

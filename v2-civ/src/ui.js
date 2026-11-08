@@ -49,7 +49,7 @@ export class UI {
       el.querySelector('.bar').onclick = (e) => { e.stopPropagation(); onCity(city); };
       el.querySelectorAll('.icons > :not(.more)').forEach((ic, i) => { ic.style.cursor = 'pointer'; ic.onclick = (e) => { e.stopPropagation(); onPick(cs[i], true); }; });
       this.root.appendChild(el);
-      return { el, city, pos: new THREE.Vector3(city.x, city.y + 5.2, city.z) };
+      return { el, city, pos: new THREE.Vector3(city.x, city.y + (city.top || 5.2), city.z) };  // above the skyline
     });
     // district tags: one per hex; a cluster hex shows its lead community plus a count
     this.tags = sites.map((s) => {

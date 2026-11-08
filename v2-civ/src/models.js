@@ -7,10 +7,11 @@ import { HEX_R } from './config.js';
 // 用户自定义模型：接口已就绪，暂未开放（UI 上显示"敬请期待"）。?custommodels=1 可在本地打开调试。
 export const FEATURES = { customModels: new URLSearchParams(location.search).has('custommodels') };
 
+// keys are kept from the first (traditional) set so existing data keeps working; the looks are now modern venues
 export const BUILTIN_STYLES = ['guild', 'tulou', 'cyber', 'observatory', 'paifang', 'savepoint', 'pinewood'];
 export const STYLE_NAMES = {
-  guild: '会馆戏台', tulou: '土楼', cyber: '赛博塔 · 咖啡馆', observatory: '观星台',
-  paifang: '牌坊市街', savepoint: '存档亭', pinewood: '松林画室',
+  guild: '孵化器 · 路演厅', tulou: '环形社区客厅', cyber: '霓虹电竞塔 · 咖啡馆', observatory: '穹顶科技馆',
+  paifang: '潮玩街区', savepoint: '存档站', pinewood: '松林艺术工坊',
 };
 
 export const CUSTOM_LIMITS = { bytes: 2 * 1024 * 1024, triangles: 20000, texture: 1024, radius: HEX_R * 0.54 };

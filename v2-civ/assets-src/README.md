@@ -1,10 +1,23 @@
-# assets-src：建筑资产源脚本（P1 对比测试）
+# assets-src：建筑资产源脚本
 
-地图里 `?asset=old|a|b` 切换雷峰塔和 Ludere 会馆（`src/assets.js`）。产物在 `public/models/`，截图在 `lab-shots/`，规范见 `../ART-SPEC.md`。
+产物在 `public/models/`，由 `src/assets.js` 加载；截图在 `lab-shots/`，规范见 `../ART-SPEC.md`。
 
-## A：Blender 脚本建模（`blender/`）
+## 现代建筑（地图正式使用，`blender/modern.py`）
 
-Blender 5.2（`~/Applications/Blender.app`），无界面运行：
+城市中心是 CBD 天际线，按档位分 6 个变体（`m_cbd_town`、`m_cbd_city_a/b`、`m_cbd_big_a/b`、`m_cbd_metro`）；社群据点 7 种（`m_guild` 孵化器 · 路演厅、`m_tulou` 环形社区客厅、`m_cyber` 霓虹电竞塔 · 咖啡馆、`m_observatory` 穹顶科技馆、`m_paifang` 潮玩街区、`m_savepoint` 存档站、`m_pinewood` 松林艺术工坊）。文件名沿用旧造型 key，社群数据不用改。地标（东方明珠、天宁塔、方塔、中华门、雷峰塔）不变。
+
+一键全部重做（Blender 4.5 或 5.x 均可；有 GPU 用 GPU，没有用 CPU）：
+
+```sh
+BLENDER=/path/to/blender sh build_modern.sh            # 全部 13 个
+BLENDER=/path/to/blender sh build_modern.sh cyber cbd_big_a   # 只做其中几个
+```
+
+预览图在系统临时目录的 `igcm-modern/` 里。城市中心贴图 2048（看得清幕墙格子），据点 1024。
+
+## A：Blender 脚本建模（`blender/`，P1 古建对比测试）
+
+`?asset=a|b` 切换雷峰塔。Blender 5.2（`~/Applications/Blender.app`），无界面运行：
 
 ```sh
 B=~/Applications/Blender.app/Contents/MacOS/Blender

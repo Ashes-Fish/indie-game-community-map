@@ -70,17 +70,18 @@ function treeGeos() {
   return { broad, conifer, bush };
 }
 
+// modern rural house (农村小洋楼): two white storeys, ribbon windows, flat roof with parapet, stair hut and water tank
 function houseGeo() {
-  const parts = [];
-  const wall = paint(new THREE.BoxGeometry(0.62, 0.36, 0.4).translate(0, 0.18, 0), '#f4f0e6');
-  const s = new THREE.Shape();
-  s.moveTo(-0.25, 0); s.lineTo(0.25, 0); s.lineTo(0, 0.22); s.lineTo(-0.25, 0);
-  const roof = new THREE.ExtrudeGeometry(s, { depth: 0.72, bevelEnabled: false }).translate(0, 0.36, -0.36).rotateY(Math.PI / 2);
-  parts.push(wall, paint(roof, '#3b3f46'));
-  // horse-head gable wall (马头墙) stub
-  parts.push(paint(new THREE.BoxGeometry(0.06, 0.2, 0.46).translate(0.31, 0.44, 0), '#f4f0e6'));
-  parts.push(paint(new THREE.BoxGeometry(0.08, 0.03, 0.5).translate(0.31, 0.55, 0), '#3b3f46'));
-  return mergeGeometries(parts);
+  const box = (w, h, d, x, y, z, c) => paint(new THREE.BoxGeometry(w, h, d).translate(x, y + h / 2, z), c);
+  return mergeGeometries([
+    box(0.62, 0.5, 0.42, 0, 0, 0, '#f4f2ec'),
+    box(0.64, 0.035, 0.44, 0, 0.24, 0, '#c9c3b6'),            // floor band
+    box(0.5, 0.09, 0.43, 0, 0.09, 0, '#3e5670'),              // ground-floor windows (front and back)
+    box(0.5, 0.09, 0.43, 0, 0.33, 0, '#3e5670'),              // upper windows
+    box(0.66, 0.05, 0.46, 0, 0.5, 0, '#b9b2a4'),              // roof slab / parapet
+    box(0.2, 0.14, 0.18, -0.16, 0.55, 0.04, '#e9e6de'),       // stair hut
+    paint(new THREE.CylinderGeometry(0.06, 0.06, 0.1, 6).translate(0.18, 0.6, -0.06), '#5d84a6'), // water tank
+  ]);
 }
 
 function peakGeo(seed) {

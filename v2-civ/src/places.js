@@ -1,87 +1,29 @@
-// Cities (城郭 + landmarks) and community districts (one distinctive compound per community, with a logo flag).
+// Cities (modern CBD skyline + landmarks) and community districts (one modern venue per community, with a logo flag).
+// The buildings themselves are Blender-baked GLBs (assets-src/blender/modern.py → public/models/m_*.glb).
 import * as THREE from 'three';
 import { Builder, makeMaterials } from './kit.js';
-import { HEX_R, rng } from './config.js';
-import { ASSET, glbSlot } from './assets.js';
-import { registerModelKind, buildModel } from './models.js';
+import { rng } from './config.js';
+import { ASSET, glbSlot, modelSlot } from './assets.js';
+import { registerModelKind, buildModel, BUILTIN_STYLES } from './models.js';
 
-const C = {
-  wall: '#8f8778', wallTop: '#6c665c', red: '#b5392e', redD: '#8e2a22', roof: '#3e4652', roofD: '#2f353f',
-  gold: '#d9a842', white: '#efe9dc', stone: '#b6aa94', stoneD: '#9a8e78', wood: '#a3784c', earth: '#c9a46c',
+const STYLE_KEYS = new Set(BUILTIN_STYLES);
+
+// colours for the procedural landmarks (pagodas, gate)
+const C = { roofD: '#2f353f', gold: '#d9a842', stone: '#b6aa94' };
+
+// CBD variant per city tier; two looks for ordinary and big cities so neighbours don't match.
+// top = roughly the tallest roof, so the city banner floats above the skyline.
+const CBD = {
+  cbd_town: 1.5, cbd_city_a: 2.9, cbd_city_b: 3.0, cbd_big_a: 5.4, cbd_big_b: 5.1, cbd_metro: 6.4,
 };
-
-function cityCenter(b, city, R) {
-  // walls grow with the city tier; radius 2 keeps the original sizes
-  const grow = Math.max(0, (city.radius || 2) - 2);
-  const L = (city.big ? 6.6 : 5.6) + Math.min(grow, 2) * 0.6, H = (city.big ? 0.78 : 0.62) + grow * 0.06, T = 0.42;
-  if (city.radius >= 4) outerWall(b, L + 1.5, H * 0.75);
-  b.cyl(L * 0.78, L * 0.84, 0.35, 6, '#a3967a', 0, -0.3, 0, 'std', Math.PI / 6);
-  // walls with gate gaps
-  const gap = 1.25;
-  for (let s = 0; s < 4; s++) {
-    const ry = (s * Math.PI) / 2, seg = (L - gap) / 2;
-    for (const k of [-1, 1]) {
-      const off = k * (gap / 2 + seg / 2);
-      const x = Math.cos(ry) * off + Math.sin(ry) * (L / 2), z = -Math.sin(ry) * off + Math.cos(ry) * (L / 2);
-      b.box(seg, H, T, C.wall, x, 0, z, ry);
-      b.box(seg, 0.08, T + 0.08, C.wallTop, x, H, z, ry);
-      // merlons
-      for (let m = 0; m < Math.floor(seg / 0.42); m++) {
-        const mo = -seg / 2 + 0.21 + m * 0.42;
-        const mx = x + Math.cos(ry) * mo, mz = z - Math.sin(ry) * mo;
-        const ox = Math.sin(ry) * T * 0.35, oz = Math.cos(ry) * T * 0.35;
-        b.box(0.2, 0.14, 0.1, C.wallTop, mx + ox, H + 0.08, mz + oz, ry);
-      }
-    }
-    // gate tower 城楼
-    const gx = Math.sin(ry) * (L / 2), gz = Math.cos(ry) * (L / 2);
-    b.box(gap + 0.6, H + 0.22, T + 0.5, C.wall, gx, 0, gz, ry);
-    b.box(gap * 0.8, 0.5, 0.18, '#3a2e26', gx + Math.sin(ry) * (T / 2 + 0.2), 0, gz + Math.cos(ry) * (T / 2 + 0.2), ry);
-    b.hall(gap + 0.2, 0.62, 0.42, C.red, C.roof, gx, H + 0.22, gz, ry, { tiers: s === 0 ? 2 : 1, ridgeColor: C.gold, roofH: 0.42 });
-    // corner towers
-    const cx = (s & 1 ? 1 : -1) * L / 2, cz = (s & 2 ? 1 : -1) * L / 2;
-    b.box(0.85, H + 0.25, 0.85, C.wall, cx, 0, cz);
-    b.hall(0.6, 0.6, 0.3, C.red, C.roof, cx, H + 0.25, cz, 0, { roofH: 0.45 });
-  }
-  // inner city: lanes of white-wall houses
-  const inner = L / 2 - 0.55;
-  for (let i = -3; i <= 3; i++) for (let j = -3; j <= 3; j++) {
-    if (Math.abs(i) <= 1 && Math.abs(j) <= 1) continue;
-    if (R() < 0.18) continue;
-    const x = i * inner / 3.4 + (R() - 0.5) * 0.15, z = j * inner / 3.4 + (R() - 0.5) * 0.15;
-    if (Math.abs(x) > inner || Math.abs(z) > inner) continue;
-    const w = 0.55 + R() * 0.25, d = 0.4 + R() * 0.15, hh = 0.3 + (R() < 0.3 ? 0.25 : 0);
-    const ry = R() < 0.5 ? 0 : Math.PI / 2;
-    b.box(w, hh, d, R() < 0.85 ? C.white : '#d8cdb8', x, 0, z, ry);
-    b.gable(w, d, 0.2, R() < 0.8 ? C.roof : C.roofD, x, hh, z, ry);
-  }
-  // central drum tower 鼓楼
-  b.box(2.0, 0.7, 1.5, C.stone, 0, 0, 0);
-  b.box(1.0, 0.7, 1.52, '#5b4636', 0, 0, 0);
-  b.hall(1.5, 1.0, 0.55, C.red, C.roof, 0, 0.7, 0, 0, { tiers: 2, ridgeColor: C.gold, roofH: 0.45 });
-  // trees inside
-  for (let k = 0; k < 6; k++) {
-    const a = R() * 6.28, r = 1.4 + R() * 1.2;
-    b.cyl(0.04, 0.06, 0.3, 5, '#5a3e28', Math.cos(a) * r, 0, Math.sin(a) * r);
-    b.sphere(0.32 + R() * 0.12, R() < 0.5 ? '#4f8a2c' : '#3d7a30', Math.cos(a) * r, 0.5, Math.sin(a) * r, 'std', 0);
-  }
-  return L;
+function cityModel(city, i) {
+  const r = city.radius || 2;
+  if (r <= 1) return 'cbd_town';
+  if (r >= 4) return 'cbd_metro';
+  return (city.big || r >= 3 ? 'cbd_big_' : 'cbd_city_') + (i % 2 ? 'b' : 'a');
 }
-
-// 外郭: a lower outer ring wall for large cities (radius >= 4)
-function outerWall(b, L, H) {
-  for (let s = 0; s < 4; s++) {
-    const ry = (s * Math.PI) / 2, seg = (L - 1.0) / 2;
-    for (const k of [-1, 1]) {
-      const off = k * (0.5 + seg / 2);
-      const x = Math.cos(ry) * off + Math.sin(ry) * (L / 2), z = -Math.sin(ry) * off + Math.cos(ry) * (L / 2);
-      b.box(seg, H, 0.3, C.stoneD, x, 0, z, ry);
-      b.box(seg, 0.06, 0.36, C.wallTop, x, H, z, ry);
-    }
-    const cx = (s & 1 ? 1 : -1) * L / 2, cz = (s & 2 ? 1 : -1) * L / 2;
-    b.box(0.6, H + 0.2, 0.6, C.stoneD, cx, 0, cz);
-  }
-}
+// half-width of the old walled city; landmarks are still placed relative to it, outside the CBD core
+const cityHalf = (city) => (city.big ? 6.6 : 5.6) + Math.min(Math.max(0, (city.radius || 2) - 2), 2) * 0.6;
 
 function landmark(b, city, L, R) {
   if (city.landmark === 'pearl') { // 东方明珠
@@ -118,9 +60,11 @@ export function buildCities(world, cities, shared) {
   cities.forEach((city, i) => {
     const R = rng(100 + i * 31);
     const b = new Builder();
-    const L = cityCenter(b, city, R);
-    landmark(b, city, L, R);
+    landmark(b, city, cityHalf(city), R);
     const g = b.build(mats);
+    const model = cityModel(city, i);
+    g.add(modelSlot('m_' + model));
+    city.top = Math.max(5.2, CBD[model] + 1.0);
     g.position.set(city.x, city.y - 0.02, city.z);
     city.group = g;
     group.add(g);
@@ -151,138 +95,6 @@ export function buildWestLake(world, rivers) {
 }
 
 // ---- districts ----
-function distBase(b, color) {
-  b.cyl(HEX_R * 0.62, HEX_R * 0.66, 0.2, 6, color, 0, -0.17, 0, 'std', Math.PI / 6);
-  b.cyl(HEX_R * 0.66, HEX_R * 0.7, 0.12, 6, '#6f8a46', 0, -0.2, 0, 'std', Math.PI / 6);
-}
-
-const STYLES = {
-  guild(b, R) { // 会馆 courtyard + opera stage
-    distBase(b, '#b3a589');
-    const W = 4.4, D = 3.8, H = 0.5;
-    for (const [w, d, x, z] of [[W, 0.2, 0, -D / 2], [0.2, D, -W / 2, 0], [0.2, D, W / 2, 0], [1.6, 0.2, -1.4, D / 2], [1.6, 0.2, 1.4, D / 2]]) {
-      b.box(w, H, d, C.white, x, 0, z); b.box(w + 0.08, 0.07, d + 0.08, C.roofD, x, H, z);
-    }
-    b.hall(1.1, 0.55, 0.55, C.red, C.roof, 0, 0, D / 2, 0, { ridgeColor: C.gold });
-    b.box(3.2, 0.25, 1.4, C.stone, 0, 0, -1.0);
-    b.hall(2.6, 1.1, 0.75, C.red, '#2f3d52', 0, 0.25, -1.0, 0, { tiers: 2, ridgeColor: C.gold, roofH: 0.42 });
-    b.hall(0.8, 1.6, 0.5, C.red, C.roof, -1.55, 0, 0.5, 0);
-    b.hall(0.8, 1.6, 0.5, C.red, C.roof, 1.55, 0, 0.5, 0);
-    // opera stage
-    for (const [x, z] of [[-0.45, 0.25], [0.45, 0.25], [-0.45, 0.95], [0.45, 0.95]]) b.cyl(0.05, 0.05, 0.6, 5, C.red, x, 0.2, z);
-    b.box(1.2, 0.2, 1.0, C.stone, 0, 0, 0.6);
-    b.roof(1.5, 1.3, 0.42, C.roof, 0, 0.8, 0.6, 0, { ridgeColor: C.gold, lift: 0.3 });
-    for (const x of [-1.9, 1.9]) b.sphere(0.12, '#ff5a3a', x, 0.7, D / 2 + 0.25, 'emis', 0);
-  },
-  tulou(b, R) { // round communal house: everybody lives together
-    distBase(b, '#b9a07a');
-    const ro = 2.05, ri = 1.45, H = 1.15;
-    const outer = new THREE.CylinderGeometry(ro, ro, H, 28, 1, true).translate(0, H / 2, 0);
-    b.geo(outer, '#d2ad74');
-    const inner = new THREE.CylinderGeometry(ri, ri, H, 28, 1, true).translate(0, H / 2, 0).scale(-1, 1, 1);
-    b.geo(inner, '#e5cfa6');
-    const roof = new THREE.LatheGeometry([new THREE.Vector2(ro + 0.32, H - 0.08), new THREE.Vector2((ro + ri) / 2, H + 0.42), new THREE.Vector2(ri - 0.25, H - 0.05)], 28);
-    b.geo(roof, '#4a4440');
-    // windows ring
-    for (let k = 0; k < 24; k++) {
-      const a = (k / 24) * Math.PI * 2;
-      for (const yy of [0.55, 0.85]) b.box(0.12, 0.12, 0.04, '#3b2a1e', Math.cos(a) * (ro + 0.01), yy, Math.sin(a) * (ro + 0.01), -a + Math.PI / 2);
-    }
-    // warm lights inside the ring (people at home)
-    for (let k = 0; k < 10; k++) { const a = (k / 10) * Math.PI * 2 + 0.3; b.box(0.12, 0.12, 0.04, '#ffcf73', Math.cos(a) * (ri - 0.01), 0.75, Math.sin(a) * (ri - 0.01), -a + Math.PI / 2, 'emis'); }
-    b.box(0.6, 0.6, 0.12, '#3b2a1e', 0, 0, ro, 0);
-    // courtyard hall
-    b.hall(0.9, 0.7, 0.4, C.red, C.roof, 0, 0, -0.2, 0, { ridgeColor: C.gold });
-    b.cyl(0.22, 0.22, 0.12, 10, '#7c8a92', 0.6, 0, 0.6);
-  },
-  cyber(b, R) { // Cyberia Coffee Club: neon tower with a pagoda roof + coffee pavilion
-    distBase(b, '#8d8e8c');
-    const w = 1.5, h = 3.4;
-    b.box(w, h, w, '#262a35', -0.6, 0, -0.5);
-    for (let k = 0; k < 7; k++) {
-      const yy = 0.35 + k * 0.42;
-      b.box(w + 0.02, 0.07, w + 0.02, k % 2 ? '#3ff2ff' : '#ff4fd8', -0.6, yy, -0.5, 0, 'emis');
-    }
-    b.roof(w * 1.6, w * 1.6, 0.6, '#1d2230', -0.6, h, -0.5, 0, { ridgeColor: '#3ff2ff', lift: 0.45 });
-    b.cyl(0.03, 0.05, 1.1, 5, '#9aa3ad', -0.6, h + 0.55, -0.5);
-    b.sphere(0.09, '#ff3048', -0.6, h + 1.7, -0.5, 'emis', 0);
-    // coffee pavilion with glass
-    b.box(1.9, 0.08, 1.3, C.stone, 1.0, 0, 0.9);
-    b.box(1.7, 0.7, 1.1, '#ffd590', 1.0, 0.08, 0.9, 0, 'emis');
-    b.box(1.8, 0.08, 1.2, '#2a2420', 1.0, 0.78, 0.9);
-    b.box(0.9, 0.24, 0.05, '#ff4fd8', 1.0, 0.92, 1.52, 0, 'emis');
-    b.box(0.2, 0.2, 0.2, '#ff8c3a', -1.6, 0, 1.2, 0.4);
-    for (const [x, z] of [[1.9, -0.6], [-1.9, 0.6], [0.6, -1.7]]) { b.cyl(0.04, 0.05, 0.3, 5, '#5a3e28', x, 0, z); b.sphere(0.32, '#3f8a3a', x, 0.5, z, 'std', 0); }
-  },
-  observatory(b, R) { // 星游集: stepped star-gazing platform with an armillary sphere and a floating star
-    distBase(b, '#b5a98e');
-    b.box(3.4, 0.45, 3.4, '#a69a84', 0, 0, -0.3);
-    b.box(2.5, 0.45, 2.5, '#b4a890', 0, 0.45, -0.3);
-    b.box(1.6, 0.45, 1.6, '#c2b69c', 0, 0.9, -0.3);
-    b.box(0.6, 0.95, 1.2, '#9b8f78', 0, 0, 1.6);
-    const y = 1.35 + 0.75;
-    b.torus(0.62, 0.045, C.gold, 0, y, -0.3, Math.PI / 2, 0);
-    b.torus(0.62, 0.045, C.gold, 0, y, -0.3, 0, 0.6);
-    b.torus(0.62, 0.045, C.gold, 0, y, -0.3, 0.8, -0.6);
-    b.cyl(0.05, 0.07, 0.75, 5, '#6a5032', 0, 1.35, -0.3);
-    b.sphere(0.14, '#e8f0ff', 0, y, -0.3, 'emis', 1);
-    b.hall(1.1, 0.7, 0.45, C.red, C.roof, -2.0, 0, 1.2, 0.2, { ridgeColor: C.gold });
-    b.hall(1.1, 0.7, 0.45, C.red, C.roof, 2.0, 0, 1.0, -0.2, { ridgeColor: C.gold });
-  },
-  paifang(b, R) { // 创乐坊: memorial archway leading into a lantern-lit market street
-    distBase(b, '#b0a487');
-    const z0 = 2.0;
-    for (const x of [-1.25, -0.42, 0.42, 1.25]) b.box(0.16, 1.4, 0.16, C.red, x, 0, z0);
-    b.box(2.9, 0.16, 0.22, C.gold, 0, 1.25, z0);
-    b.roof(1.3, 0.55, 0.32, '#2f6b5a', 0, 1.62, z0, 0, { ridgeColor: C.gold, lift: 0.22 });
-    b.box(0.9, 0.2, 0.06, '#1f3a5c', 0, 1.42, z0 + 0.12);
-    b.roof(1.0, 0.5, 0.26, '#2f6b5a', -0.95, 1.38, z0, 0, { ridgeColor: C.gold, lift: 0.2 });
-    b.roof(1.0, 0.5, 0.26, '#2f6b5a', 0.95, 1.38, z0, 0, { ridgeColor: C.gold, lift: 0.2 });
-    b.box(0.8, 0.02, 3.6, '#8a7f6c', 0, 0.01, 0.0);
-    for (const side of [-1, 1]) for (let k = 0; k < 4; k++) {
-      const z = 1.1 - k * 0.95, x = side * 1.15;
-      const two = (k + (side > 0 ? 1 : 0)) % 2 === 0;
-      b.box(0.9, two ? 0.75 : 0.5, 0.8, C.white, x, 0, z);
-      b.box(0.92, 0.05, 0.82, '#5a3e2a', x, 0.42, z);
-      b.gable(0.8, 0.95, 0.28, C.roof, x, two ? 0.75 : 0.5, z, Math.PI / 2);
-      b.sphere(0.08, '#ff4a2a', x - side * 0.5, 0.48, z, 'emis', 0);
-    }
-  },
-  savepoint(b, R) { // 存档点: hexagonal pavilion sheltering a glowing save crystal
-    distBase(b, '#aca08a');
-    b.cyl(1.45, 1.55, 0.25, 6, C.stone, 0, 0, 0, 'std', Math.PI / 6);
-    for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2; b.cyl(0.06, 0.06, 1.05, 6, C.red, Math.cos(a) * 1.1, 0.25, Math.sin(a) * 1.1); }
-    const roof = new THREE.ConeGeometry(1.75, 0.9, 6, 3);
-    const p = roof.attributes.position;
-    for (let i = 0; i < p.count; i++) { const y = p.getY(i); const t = (0.45 - y) / 0.9; p.setY(i, y - Math.sin(t * Math.PI) * 0.12 + Math.pow(t, 6) * 0.22); }
-    roof.computeVertexNormals(); roof.translate(0, 1.3 + 0.45, 0);
-    b.geo(roof, '#2f4a5c', 0, 0, 0, Math.PI / 6);
-    b.sphere(0.12, C.gold, 0, 2.25, 0, 'std', 0);
-    b.cyl(0.25, 0.32, 0.3, 6, '#7c7468', 0, 0.25, 0);
-    for (let k = 0; k < 4; k++) { const a = (k / 4) * Math.PI * 2 + 0.78; b.box(0.18, 0.4, 0.18, '#8a8070', Math.cos(a) * 2.4, 0, Math.sin(a) * 2.4); b.box(0.12, 0.1, 0.12, '#ffd36b', Math.cos(a) * 2.4, 0.3, Math.sin(a) * 2.4, 0, 'emis'); }
-  },
-  pinewood(b, R) { // Pinewood Lab: timber art studio in a pine grove + a red sculpture
-    distBase(b, '#9f9a7c');
-    b.box(2.6, 0.9, 1.5, '#b88a58', -0.3, 0, -0.4);
-    b.box(2.2, 0.62, 0.05, '#ffe2b0', -0.3, 0.12, 0.36, 0, 'emis');
-    for (let k = 0; k < 4; k++) {
-      const s = new THREE.Shape(); s.moveTo(0, 0); s.lineTo(0.65, 0); s.lineTo(0, 0.42); s.lineTo(0, 0);
-      const g = new THREE.ExtrudeGeometry(s, { depth: 1.5, bevelEnabled: false }).translate(-1.6 + k * 0.65, 0.9, -1.15);
-      b.geo(g, '#5b4a3a');
-    }
-    b.torus(0.45, 0.09, '#d63b2f', 1.6, 0.55, 1.1, 0, 0.6);
-    b.box(0.4, 0.12, 0.4, C.stone, 1.6, 0, 1.1);
-    for (let k = 0; k < 9; k++) {
-      const a = (k / 9) * Math.PI * 2 + R(), r = 2.3 + R() * 0.9;
-      const x = Math.cos(a) * r, z = Math.sin(a) * r, s = 0.9 + R() * 0.5;
-      b.cyl(0.05, 0.08, 0.5 * s, 5, '#5a3e28', x, 0, z);
-      b.cone(0.42 * s, 0.9 * s, 6, '#2c5e36', x, 0.35 * s, z);
-      b.cone(0.3 * s, 0.75 * s, 6, '#336a3c', x, 0.85 * s, z);
-      b.cone(0.18 * s, 0.55 * s, 6, '#3b7442', x, 1.3 * s, z);
-    }
-  },
-};
-
 function makeFlagTexture(cm, color, img) {
   const c = document.createElement('canvas');
   c.width = 256; c.height = 170;
@@ -331,17 +143,8 @@ export function makeFlag(cm, color, img, shared) {
   return grp;
 }
 
-registerModelKind('builtin', (m, cm) => {
-  // ?asset=a|b: the guild style uses the GLB version (its base stays aligned to the hex grid, no twist)
-  if (ASSET !== 'old' && m.style === 'guild') return glbSlot('guild');
-  const R = rng(cm.key.length * 977 + 13);
-  const b = new Builder();
-  (STYLES[m.style] || STYLES.guild)(b, R);
-  const g = b.build(makeMaterials());
-  // orient the compound to face the camera (south) with a slight random twist
-  g.rotation.y = (R() - 0.5) * 0.25;
-  return g;
-});
+// built-in looks are modern venues baked in Blender; the base stays aligned to the hex grid, facing south
+registerModelKind('builtin', (m) => modelSlot('m_' + (STYLE_KEYS.has(m.style) ? m.style : 'guild')));
 
 // flag spots around a district hex: the first is the site's own flag, the rest are for cluster members
 const FLAG_SPOTS = [[2.7, 2.0, -0.35], [-2.8, 1.9, 0.35], [2.6, -2.3, -0.6], [-2.6, -2.3, 0.6]];
