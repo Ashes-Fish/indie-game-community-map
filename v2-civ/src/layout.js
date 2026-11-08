@@ -1,6 +1,6 @@
 // City size, territory and community placement. Pure logic on the hex grid: no three.js.
 // See docs/城市规模与据点方案.md for the rules.
-import { HEX_DIRS, hexCenter, hexIndex, hexDist, toWorld } from './config.js';
+import { HEX_DIRS, hexCenter, hexDist, toWorld } from './config.js';
 
 // community count -> radius. `max` is the largest count a tier holds.
 export const TIERS = [
@@ -55,12 +55,13 @@ function claim(hx, cities) {
 
 const usable = (h, cityIdx) => h.waterFrac < LAND && !h.isCity && h.owner === cityIdx;
 
-export function layoutCities(hx, cities, communities, pins = {}) {
+// index(q, r): position of a hex in hx (the patch window onto the global grid, world.js), -1 outside
+export function layoutCities(hx, cities, communities, pins = {}, index) {
   const pinC = pins.communities || {}, pinR = pins.cities || {};
   const byCity = new Map(cities.map((c) => [c.id, communities.filter((m) => m.cityId === c.id)]));
   for (const c of cities) c.pinnedRadius = pinR[c.id];
   for (const c of cities) c.radius = baseRadius(c, byCity.get(c.id).length, cities);
-  const cityAt = new Set(cities.map((c) => hexIndex(c.hex[0], c.hex[1])));
+  const cityAt = new Set(cities.map((c) => index(c.hex[0], c.hex[1])));
   for (const h of hx) h.isCity = cityAt.has(h.i);
 
   // squeezed cities grow one ring at a time (never past MAX_RADIUS) until their communities fit
@@ -104,7 +105,7 @@ export function layoutCities(hx, cities, communities, pins = {}) {
     const rest = [];
     for (const cm of members) {
       const p = pinC[cm.key];
-      const i = p ? hexIndex(p[0], p[1]) : -1;
+      const i = p ? index(p[0], p[1]) : -1;
       const h = i >= 0 ? hx[i] : null;
       if (h && usable(h, ci + 1)) join(taken.get(h.i) || open(h), cm);
       else rest.push(cm);
@@ -120,10 +121,10 @@ export function layoutCities(hx, cities, communities, pins = {}) {
       let site = null, bs = -Infinity;
       for (const s of cands) {
         const full = s.members.length >= CLUSTER_MAX;
-        const v = score(hx[hexIndex(s.hex[0], s.hex[1])], cm) - (full ? 1e3 : 0) - s.members.length * 0.5;
+        const v = score(hx[index(s.hex[0], s.hex[1])], cm) - (full ? 1e3 : 0) - s.members.length * 0.5;
         if (v > bs) { bs = v; site = s; }
       }
-      if (!site) site = open(hx[hexIndex(city.hex[0] + 1, city.hex[1])]); // degenerate: no usable land at all
+      if (!site) site = open(hx[index(city.hex[0] + 1, city.hex[1])]); // degenerate: no usable land at all
       join(site, cm);
     }
   });

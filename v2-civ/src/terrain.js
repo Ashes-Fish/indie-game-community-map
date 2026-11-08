@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { XMIN, XMAX, ZMIN, ZMAX, EXAG, EXP, rng } from './config.js';
+import { EXAG, EXP, rng } from './config.js';
 import { GLSL_COMMON } from './glsl.js';
 import { loadImage } from './world.js';
 
@@ -452,11 +452,14 @@ export function makeTerrainDepthMaterial(shared) {
   return m;
 }
 
-export function buildTerrainMesh(world, shared, step, mobile) {
-  const nx = Math.round((XMAX - XMIN) / step) + 1, nz = Math.round((ZMAX - ZMIN) / step) + 1;
+// One land patch's terrain at the given grid step (km); shared = the patch's uniforms (World.shared)
+export function buildTerrainMesh(world, shared, step, mobile, material) {
+  const { x0, z0, x1, z1 } = world;
+  const nx = Math.round((x1 - x0) / step) + 1, nz = Math.round((z1 - z0) / step) + 1;
+  const sx = (x1 - x0) / (nx - 1), sz = (z1 - z0) / (nz - 1);
   const pos = new Float32Array(nx * nz * 3);
   for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
-    const x = XMIN + i * step, z = ZMIN + j * step, k = (j * nx + i) * 3;
+    const x = x0 + i * sx, z = z0 + j * sz, k = (j * nx + i) * 3;
     pos[k] = x; pos[k + 1] = world.heightY(x, z); pos[k + 2] = z;
   }
   const idx = new Uint32Array((nx - 1) * (nz - 1) * 6);
@@ -470,25 +473,32 @@ export function buildTerrainMesh(world, shared, step, mobile) {
   g.setIndex(new THREE.BufferAttribute(idx, 1));
   g.computeVertexNormals();
   g.computeBoundingSphere();
-  const mat = makeTerrainMaterial(shared, mobile);
+  const mat = material || makeTerrainMaterial(shared, mobile);
   const mesh = new THREE.Mesh(g, mat);
   mesh.receiveShadow = true; mesh.castShadow = true;
   mesh.customDepthMaterial = makeTerrainDepthMaterial(shared);
+  return { mesh, material: mat };
+}
 
-  // outer paper ring
-  const outer = new THREE.Shape();
-  // shape y is world -z (the shape is rotated onto the ground below)
-  const [x0, z0, x1, z1] = shared.paperRect || [-2600, -2600, 2600, 2600];
+// The national paper map everywhere outside the land patches: one flat sheet over rect [x0, z0, x1, z1] with a hole per
+// patch. It runs the terrain shader with an empty patch (nothing revealed, no patch rect), so it is exactly the
+// paper the patches fade into at their edges.
+export function buildPaperPlane(rect, holes, shared, mobile) {
+  const [x0, z0, x1, z1] = rect;
+  const outer = new THREE.Shape();   // shape y is world −z (rotated onto the ground below)
   outer.moveTo(x0, -z1); outer.lineTo(x1, -z1); outer.lineTo(x1, -z0); outer.lineTo(x0, -z0); outer.lineTo(x0, -z1);
-  const hole = new THREE.Path();
-  hole.moveTo(XMIN + 0.5, ZMIN + 0.5); hole.lineTo(XMIN + 0.5, ZMAX - 0.5); hole.lineTo(XMAX - 0.5, ZMAX - 0.5); hole.lineTo(XMAX - 0.5, ZMIN + 0.5); hole.lineTo(XMIN + 0.5, ZMIN + 0.5);
-  outer.holes.push(hole);
-  const rg = new THREE.ShapeGeometry(outer);
-  rg.rotateX(-Math.PI / 2);
-  const ring = new THREE.Mesh(rg, mat);
-  ring.position.y = 0.03;
-  ring.receiveShadow = true;
-  const group = new THREE.Group();
-  group.add(mesh, ring);
-  return { group, mesh, material: mat };
+  for (const w of holes) {
+    const h = new THREE.Path(), e = 0.5;
+    h.moveTo(w.x0 + e, -(w.z0 + e)); h.lineTo(w.x0 + e, -(w.z1 - e)); h.lineTo(w.x1 - e, -(w.z1 - e)); h.lineTo(w.x1 - e, -(w.z0 + e)); h.lineTo(w.x0 + e, -(w.z0 + e));
+    outer.holes.push(h);
+  }
+  const g = new THREE.ShapeGeometry(outer);
+  g.rotateX(-Math.PI / 2);
+  const ps = { uniforms: { ...shared.uniforms,
+    uHex: { value: null }, uWater: { value: null }, uNormalTex: { value: null }, uInk: { value: null }, uRevealB: { value: 0 },
+    uRect: { value: new THREE.Vector4(1e5, 1e5, 1, 1) }, uHexGrid: { value: new THREE.Vector4(0, 0, 0, 0) } } };
+  const mesh = new THREE.Mesh(g, makeTerrainMaterial(ps, mobile));
+  mesh.position.y = 0.03;
+  mesh.receiveShadow = true;
+  return mesh;
 }

@@ -133,14 +133,33 @@ export class CivCamera {
   }
 
   flyTo(x, z, dist, dur = 1.6, y = 0) {
-    this.fly = { t: 0, dur, from: { x: this.target.x, z: this.target.z, y: this.target.y, d: this.dist }, to: { x, z, y, d: dist } };
+    const from = { x: this.target.x, z: this.target.z, y: this.target.y, d: this.dist };
+    // a hop across the country (far apart compared with the zoom): rise until both ends are in view, pan, come down
+    const span = Math.hypot(x - from.x, z - from.z);
+    const peak = Math.min(this.maxD, span * 1.15);
+    const hop = peak > 2.5 * Math.max(from.d, dist) ? peak : 0;
+    if (hop) dur = Math.max(dur, 1.4 + 0.45 * Math.log2(hop / Math.max(from.d, dist)));
+    this.fly = { t: 0, dur, hop, from, to: { x, z, y, d: dist } };
     this.vel.set(0, 0);
   }
 
   update(dt) {
     if (this.fly) {
       const f = this.fly; f.t += dt;
-      const u = Math.min(1, f.t / f.dur), e = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+      const u = Math.min(1, f.t / f.dur);
+      let e = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+      if (f.hop) {   // log-space arc through the peak height; the pan happens while high up
+        const s = u * u * (3 - 2 * u), l = (v) => Math.log(v);
+        const ld = (1 - s) * (1 - s) * l(f.from.d) + 2 * s * (1 - s) * (2 * l(f.hop) - (l(f.from.d) + l(f.to.d)) / 2) + s * s * l(f.to.d);
+        const k = Math.min(1, Math.max(0, (u - 0.18) / 0.64)); e = k * k * (3 - 2 * k);
+        this.target.x = f.from.x + (f.to.x - f.from.x) * e;
+        this.target.z = f.from.z + (f.to.z - f.from.z) * e;
+        this.target.y = f.from.y + (f.to.y - f.from.y) * e;
+        this.dist = this.goalDist = Math.min(this.maxD, Math.exp(ld));
+        if (u >= 1) this.fly = null;
+        this.apply();
+        return true;
+      }
       // arc out a little in the middle of long flights
       const span = Math.hypot(f.to.x - f.from.x, f.to.z - f.from.z);
       const lift = Math.sin(Math.PI * u) * Math.min(span * 0.6, 160) * (f.to.d < f.from.d * 1.5 ? 1 : 0.3);

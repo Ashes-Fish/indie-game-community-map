@@ -1,4 +1,4 @@
-# Bake height.png, water.png (signed distance field), rivers.json and meta.json for one Civ-style map region.
+# Bake height.png, water.png (signed distance field), rivers.json and meta.json for one land patch (national frame).
 # Usage: bake.py <scripts dir> <dem dir> <natural earth dir> <out dir>   (region from geo.py / environment)
 # 长三角 (yrd) also gets its hand-authored canal, Huangpu and an exaggerated West Lake.
 import sys, json, math, numpy as np
@@ -10,17 +10,17 @@ YRD = geo.REGION_ID == 'yrd'
 mos = np.load(D + '/mosaic.npy'); Z, X0, Y0 = map(int, open(D + '/mosaic.txt').read().split())
 SS = 3; RS = geo.RES / SS; WS, HS = geo.W * SS, geo.H * SS
 xs = geo.XMIN + (np.arange(WS) + 0.5) * RS; zs = geo.ZMIN + (np.arange(HS) + 0.5) * RS
-lon = geo.LON0 + xs / geo.KX; lat = geo.LAT0 - zs / geo.KZ
-px = ((lon + 180) / 360 * 2**Z - X0) * 256 - 0.5
-py = ((1 - np.arcsinh(np.tan(np.radians(lat))) / math.pi) / 2 * 2**Z - Y0) * 256 - 0.5
-PX, PY = np.meshgrid(px, py)
+LON, LAT = geo.to_lonlat(*np.meshgrid(xs, zs))   # the national frame is not separable in lon / lat
+PX = ((LON + 180) / 360 * 2**Z - X0) * 256 - 0.5
+PY = ((1 - np.arcsinh(np.tan(np.radians(LAT))) / math.pi) / 2 * 2**Z - Y0) * 256 - 0.5
+del LON, LAT
 x0 = np.floor(PX).astype(int); y0 = np.floor(PY).astype(int); fx = PX - x0; fy = PY - y0
 def g(yy, xx): return mos[np.clip(yy, 0, mos.shape[0]-1), np.clip(xx, 0, mos.shape[1]-1)]
 hs = (g(y0, x0) * (1-fx) + g(y0, x0+1) * fx) * (1-fy) + (g(y0+1, x0) * (1-fx) + g(y0+1, x0+1) * fx) * fy
 del PX, PY, x0, y0, fx, fy
 
 def ss_px(lo, la):
-    x, z = geo.to_world(lo, la); return ((x - geo.XMIN) / RS, (z - geo.ZMIN) / RS)
+    x, z = geo.to_world(lo, la); return (float(x - geo.XMIN) / RS, float(z - geo.ZMIN) / RS)
 def polys(geom):
     if geom['type'] == 'Polygon': return [geom['coordinates']]
     if geom['type'] == 'MultiPolygon': return geom['coordinates']
@@ -130,9 +130,9 @@ def simp(pts, tol):
     return [pts[0], pts[-1]]
 out = []
 for r in riv:
-    w = [geo.to_world(*c) for c in r['pts']]
+    w = [tuple(map(float, geo.to_world(*c))) for c in r['pts']]
     w = simp(w, 0.25)
     out.append({'name': r['name'], 'w': r['w'], 'water': r['carve'], 'pts': [[round(x, 2), round(z, 2)] for x, z in w]})
-json.dump({'rivers': out, 'westLake': [[round(v, 2) for v in geo.to_world(*c)] for c in wl]}, open(OUT + '/rivers.json', 'w'), separators=(',', ':'))
+json.dump({'rivers': out, 'westLake': [[round(float(v), 2) for v in geo.to_world(*c)] for c in wl]}, open(OUT + '/rivers.json', 'w'), separators=(',', ':'))
 json.dump({'hmax': HMAX}, open(OUT + '/meta.json', 'w'))
 print('height', enc.shape, 'water', enc2.shape, 'rivers', len(out), 'hmax', HMAX)

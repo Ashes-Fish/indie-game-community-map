@@ -1,12 +1,12 @@
 {
   "cities": { "nanjing": 2, "changzhou": 2, "changshu": 1, "shanghai": 2, "hangzhou": 2 },
   "communities": {
-    "ludere": [11, -1],
-    "keting": [-3, 9],
-    "cyberia": [-5, 9],
-    "xingyouji": [-4, 8],
-    "chuanglefang": [3, -9],
-    "cundang": [-5, -11],
-    "pinewood": [-6, -12]
+    "ludere": [107, 57],
+    "keting": [94, 68],
+    "cyberia": [92, 69],
+    "xingyouji": [93, 68],
+    "chuanglefang": [97, 51],
+    "cundang": [89, 50],
+    "pinewood": [87, 50]
   }
 }

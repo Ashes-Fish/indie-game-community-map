@@ -1,5 +1,6 @@
-// Shared GLSL: noise, hex math, fog-of-war field
-import { HEX_R, HEX_N, HEX_OFF, XMIN, ZMIN, XMAX, ZMAX } from './config.js';
+// Shared GLSL: noise, hex math, fog-of-war field. Patch-specific values (rect, hex window) are uniforms, so every land
+// patch shares one compiled program; see World.uniforms in world.js.
+import { HEX_R } from './config.js';
 
 const f = (v) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
 
@@ -7,12 +8,12 @@ export const GLSL_COMMON = /* glsl */`
 #define HEX_R ${f(HEX_R)}
 #define SQ3 1.7320508
 #define APO ${f(HEX_R * Math.sqrt(3) / 2)}
-#define HEXN ${f(HEX_N)}
-#define HEXOFF ${f(HEX_OFF)}
-#define WXMIN ${f(XMIN)}
-#define WZMIN ${f(ZMIN)}
-#define WXSPAN ${f(XMAX - XMIN)}
-#define WZSPAN ${f(ZMAX - ZMIN)}
+uniform vec4 uRect;      // patch x0, z0, width, depth (km)
+uniform vec4 uHexGrid;   // first offset column, first row, columns, rows of the patch's hex data texture
+#define WXMIN uRect.x
+#define WZMIN uRect.y
+#define WXSPAN uRect.z
+#define WZSPAN uRect.w
 uniform sampler2D uHex;
 uniform float uRevealB;
 uniform float uTime;
@@ -35,9 +36,9 @@ vec2 hexRound(vec2 a){
 vec2 hexCenter(vec2 a){ return vec2(HEX_R*(SQ3*a.x + SQ3*0.5*a.y), HEX_R*1.5*a.y); }
 vec4 hexData(vec2 a){
   float r = a.y; float col = a.x + (r - mod(r, 2.0))*0.5;
-  vec2 ij = vec2(col + HEXOFF, r + HEXOFF);
-  if (ij.x < 0.0 || ij.y < 0.0 || ij.x > HEXN-1.0 || ij.y > HEXN-1.0) return vec4(0.0, 0.0, 1.0, 0.0);
-  return texture2D(uHex, (ij + 0.5)/HEXN);
+  vec2 ij = vec2(col, r) - uHexGrid.xy;
+  if (ij.x < 0.0 || ij.y < 0.0 || ij.x > uHexGrid.z-1.0 || ij.y > uHexGrid.w-1.0) return vec4(0.0, 0.0, 1.0, 0.0);
+  return texture2D(uHex, (ij + 0.5)/uHexGrid.zw);
 }
 float hexRevealed(vec4 d){ return step(d.b*255.0, uRevealB); }
 // smooth reveal field (1 = revealed). Kernel blend of the 7 nearest hexes with a domain warp.

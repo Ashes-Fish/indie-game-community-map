@@ -1,10 +1,9 @@
-// M0 原型：全国古舆图纸面（方向 A，见 docs/全国一张世界方案.md）。
-// The whole country drawn once into a canvas in this scene's local frame: Albers, rotated and scaled about the region
-// centre so local north and distances match, then laid under / around the region's terrain as the fog-of-war paper.
-// Two looks to compare: 'qinglv' (墨线 + 青绿淡彩) and 'mo' (纯墨 + 做旧纸黄).
+// 全国古舆图纸面（方向 A，见 docs/全国一张世界方案.md）: the whole country drawn once into a canvas in the national
+// frame (config.js), laid under and around the land patches as the fog-of-war paper.
+// Style 'qinglv' (墨线 + 青绿淡彩) is the chosen look; 'mo' (纯墨 + 做旧纸黄) stays as ?paper=mo.
 import * as THREE from 'three';
-import { albers, ALBERS_N } from './albers.js';
-import { LON0, LAT0, KZ, rng } from './config.js';
+import { albers, Z0 } from './albers.js';
+import { toWorld, rng } from './config.js';
 import { drawMountain, compass, KAI } from './parchment.js';
 import { CN_CITIES } from './cn.js';
 
@@ -31,20 +30,8 @@ export function paperMul(style) {
   return new THREE.Vector3(c.r / C_PAPER.r, c.g / C_PAPER.g, c.b / C_PAPER.b);
 }
 
-// ---------- national ↔ local frame ----------
-const GAM = ALBERS_N * ((LON0 - 105) * Math.PI) / 180;           // meridian convergence at the region centre
-const CG = Math.cos(GAM), SG = Math.sin(GAM);
-const [AX0, AY0] = albers(LON0, LAT0);
-const SC = KZ / Math.hypot(...[0, 1].map((k) => albers(LON0, LAT0 + 0.5)[k] - albers(LON0, LAT0 - 0.5)[k])); // km per Albers km
-export function toLocal(lon, lat) {
-  const [ax, ay] = albers(lon, lat);
-  const dx = (ax - AX0) * SC, dy = (ay - AY0) * SC;
-  return [dx * CG + dy * SG, -(-dx * SG + dy * CG)];
-}
-function localToAlbers(x, z) {
-  const e = x, n = -z;
-  return [(e * CG - n * SG) / SC + AX0, (e * SG + n * CG) / SC + AY0];
-}
+const toLocal = toWorld;
+const localToAlbers = (x, z) => [x, Z0 - z];
 
 // province name positions where the centroid lands on a neighbour or a capital
 const LABEL_AT = { 河北: [115.4, 38.3], 内蒙古: [112.5, 42.6], 甘肃: [100.8, 38.6], 北京: null, 天津: null, 上海: null, 香港: null, 澳门: null };

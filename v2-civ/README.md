@@ -1,6 +1,6 @@
 # v2-civ · 中国独立游戏社团地图（《文明6》画风）
 
-远看是全国古舆图（`src/china.js`，2D），近看是 3D（`src/scene.js`）：有社群的城市按片区分成 7 个 3D 区域（长三角、京津、成渝、珠三角、关中、辽沈、闽南闽东，见 `src/data/regions.json`），一次只加载一个。Vite + three.js，建筑是 Blender 烘焙的 GLB（`assets-src/`）。方案见 `docs/全国版规划方案.md`。
+全国是一个 3D 世界、一个镜头（`src/scene.js`）：没有社群的地方是古舆图纸面（`src/natink.js`），有社群的城市周围从纸上长出 3D 地块（`src/data/patches.json`，现在 7 块：长三角、京津、成渝、珠三角、关中、辽沈、闽南闽东），从全国一路滚轮推到街区，不换页。坐标是全国统一的阿尔伯斯投影（`src/albers.js`），六边形是全国一张网格。Vite + three.js，建筑是 Blender 烘焙的 GLB（`assets-src/`）。方案见 `docs/全国一张世界方案.md`（城市表、合规等见 `docs/全国版规划方案.md`）。
 
 ## 怎么跑
 
@@ -11,16 +11,16 @@ npm run dev      # 开发预览
 npm run build    # 产物在 dist/，任何静态服务器都能开，例如 npx serve dist
 ```
 
-URL 参数：不带参数是全国地图，`?focus=yrd` 全国地图对准某区域；`?region=chengyu` 打开某 3D 区域，`&fly=chengdu` 进入后飞到某城（旧链接 `?view=`、`?open=` 会自动找到所在区域）。调试/截图用：`?instant` 跳过开场动画，`?view=hangzhou&d=60` 直接看某城，`?cx=30&cz=-30&d=50` 看任意坐标，`?open=cyberia` 打开某社团面板，`?q=low` 强制手机画质，`?ao=0` 关掉顶点环境光遮蔽（对比用），`?mock=shanghai:40` 加占位社群测试城市分档。
+URL 参数：不带参数从全国视角开始；`?region=chengyu` 从某地块全景开始，`?view=hangzhou&d=60` 直接看某城，`?open=cyberia` 打开某社团面板，`?tour` 自动从全国推到杭州，`?paper=mo` 换纯墨做旧纸面。调试/截图用：`?cx=1400&cz=600&d=50` 看任意坐标（全国公里坐标），`?q=low` 强制手机画质，`?ao=0` 关掉顶点环境光遮蔽（对比用），`?mock=shanghai:40` 加占位社群测试城市分档。
 
 城市范围按社群数自动分档、社群自动落位，规则和新增社群的流程见 `docs/城市规模与据点方案.md`。
 
 ## 数据来源
 
-- 高程：AWS Terrain Tiles（Terrarium，z9，含 SRTM/GEBCO 等），每个区域烘焙成 `public/data/regions/<区域>/height.png`；高程上限按区域自动定（`regions.json` 的 `hmax`），地貌和山形按"高出本区域低地多少"判断，成都平原不会被当成山。
+- 高程：AWS Terrain Tiles（Terrarium，z9，含 SRTM/GEBCO 等），每个地块烘焙成 `public/data/patches/<地块>/height.png`；高程上限按地块自动定（`patches.json` 的 `hmax`），地貌和山形按"高出本地块低地多少"判断，成都平原不会被当成山。
 - 海岸、湖泊、江河：Terrarium 水深 + Natural Earth 10m（land / lakes / rivers），烘焙成水域距离场 `water.png`。长三角的运河、黄浦江、西湖为手绘近似。
-- 全国地图：省界、国界、九段线和全部地级城市驻地来自 DataV.GeoAtlas（高德数据），江河湖泊来自 Natural Earth，地貌晕渲来自 Terrarium z6，烘焙成 `public/data/china/` 和 `src/data/china-cities.json`。**正式公开前要按《全国版规划方案》3.2 节换成标准地图数据。**
-- 重新烘焙（需要 numpy、Pillow、scipy；没有 Python 时可用 Blender 自带的 Python，见 `assets-src/README.md`）：`python scripts/bake_region.py [区域…]` 烘 3D 区域（自动下载高程和 Natural Earth），`python scripts/bake_china.py` 烘全国地图。原始数据放 `bake-raw/`，不进仓库。新增区域：在 `regions.json` 加一行（中心经纬度），再跑 `bake_region.py <区域>`。
+- 全国纸面：省界、国界、九段线和全部地级城市驻地来自 DataV.GeoAtlas（高德数据），江河湖泊来自 Natural Earth，山形和海面来自 Terrarium z6，烘焙成 `public/data/china/` 和 `src/data/china-cities.json`，浏览器里画成古舆图。**正式公开前要按《全国版规划方案》3.2 节换成标准地图数据。**
+- 重新烘焙（需要 numpy、Pillow、scipy；没有 Python 时可用 Blender 自带的 Python，见 `assets-src/README.md`）：新增社群后先跑 `node scripts/patches.mjs`（按社群城市自动算地块：320 公里内的城市连成一块，外扩 150 公里），再跑 `python scripts/bake_patch.py [地块…]` 烘地块（自动下载高程和 Natural Earth）；`python scripts/bake_china.py` 烘全国纸面数据。原始数据放 `bake-raw/`，不进仓库。地块的名字沿用 `src/data/regions.json`（按中心就近匹配），新地区可在那里加一行起名。
 - 社团：直接读仓库 `site/data/communities.json`，logo 由 `site/images/` 缩成 256px webp。
 
 ## 画面环境（P2）

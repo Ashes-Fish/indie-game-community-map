@@ -18,7 +18,7 @@ export function buildSmoke(emitters, shared, Q) {
   g.setAttribute('aK', new THREE.BufferAttribute(K, 1));
   const mat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false,
-    uniforms: { uScale: { value: 500 }, uCamDist: shared.uniforms.uCamDist, uTime: shared.uniforms.uTime, uRevealB: shared.uniforms.uRevealB, uHex: shared.uniforms.uHex },
+    uniforms: { uScale: { value: 500 }, uCamDist: shared.uniforms.uCamDist, uTime: shared.uniforms.uTime, uRevealB: shared.uniforms.uRevealB, uHex: shared.uniforms.uHex, uHexGrid: shared.uniforms.uHexGrid, uRect: shared.uniforms.uRect },
     vertexShader: `${GLSL_COMMON}
       attribute vec4 aE; attribute float aK; uniform float uScale; varying float vA; varying float vT;
       void main(){
@@ -203,7 +203,7 @@ export function livenBuildings(root, shared) {
     m.customProgramCacheKey = () => `liven:${basic}:${prevKey}`;
     m.onBeforeCompile = (sh, r) => {
       prev.call(m, sh, r);
-      Object.assign(sh.uniforms, { uTime: shared.uniforms.uTime, uRevealB: shared.uniforms.uRevealB, uHex: shared.uniforms.uHex, uCamDist: shared.uniforms.uCamDist });
+      Object.assign(sh.uniforms, { uTime: shared.uniforms.uTime, uRevealB: shared.uniforms.uRevealB, uHex: shared.uniforms.uHex, uHexGrid: shared.uniforms.uHexGrid, uRect: shared.uniforms.uRect, uCamDist: shared.uniforms.uCamDist });
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vLW;')
         .replace('#include <begin_vertex>', `#include <begin_vertex>
           #ifdef USE_INSTANCING

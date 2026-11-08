@@ -4,7 +4,8 @@
 # AWS Terrarium elevation (z6). Outputs:
 #   src/data/china-cities.json        every prefecture-level unit (+ municipalities, SARs, 省直辖县): adcode, name, seat
 #   public/data/china/map.json        simplified provinces, national outline, nine-dash line, rivers, lakes (lon/lat)
-#   public/data/china/relief.webp     paper + relief shading in the Albers projection used by src/albers.js
+#   public/data/china/elev.png        elevation + inside-China mask for the national ink map (src/natink.js), Albers frame
+#   public/data/china/relief.json     that frame (relief.webp, the old 2D map's shading, is only written with --relief)
 # 注意：正式公开发布前，边界数据要按《全国版规划方案》3.2 节换成标准地图服务数据并走审图流程。
 import json, math, os, sys, time, urllib.request
 import numpy as np
@@ -173,9 +174,10 @@ def main():
 def relief(country, BX):
     """Paper + elevation tint + hill shading, resampled into Albers. China is drawn strongly, neighbours faintly."""
     Z = 6
+    DBX = (58.0, 4.0, 158.0, 64.0)  # elevation for the whole Albers frame (its corners reach past the China box)
     tx = lambda lon: (lon + 180) / 360 * 2 ** Z
     ty = lambda lat: (1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * 2 ** Z
-    x0, x1, y0, y1 = int(tx(BX[0])), int(tx(BX[2])), int(ty(BX[3])), int(ty(BX[1]))
+    x0, x1, y0, y1 = int(tx(DBX[0])), int(tx(DBX[2])), int(ty(DBX[3])), int(ty(DBX[1]))
     dem_dir = os.path.join(RAW, 'dem', 'china_z6')
     os.makedirs(dem_dir, exist_ok=True)
     mos = np.zeros(((y1 - y0 + 1) * 256, (x1 - x0 + 1) * 256), np.float32)
@@ -183,8 +185,17 @@ def relief(country, BX):
         for x in range(x0, x1 + 1):
             p = os.path.join(dem_dir, f'{Z}_{x}_{y}.png')
             if not os.path.exists(p):
-                open(p, 'wb').write(urllib.request.urlopen(
-                    f'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{Z}/{x}/{y}.png', timeout=60).read())
+                for k in range(6):  # the handshake to S3 times out now and then from mainland networks
+                    try:
+                        data = urllib.request.urlopen(f'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{Z}/{x}/{y}.png', timeout=60).read()
+                        break
+                    except OSError as e:
+                        if k == 5:
+                            raise
+                        print('retry', x, y, e, flush=True)
+                        time.sleep(3 + k * 3)
+                open(p + '.part', 'wb').write(data)
+                os.replace(p + '.part', p)
             a = np.asarray(Image.open(p).convert('RGB')).astype(np.float32)
             mos[(y - y0) * 256:(y - y0 + 1) * 256, (x - x0) * 256:(x - x0 + 1) * 256] = a[..., 0] * 256 + a[..., 1] + a[..., 2] / 256 - 32768
     # Albers frame around the mainland + Hainan (the South China Sea islands go in an inset drawn from vectors)
@@ -237,16 +248,17 @@ def relief(country, BX):
     cn_rgb = np.clip(tint * k, 0, 1)
     nb_rgb = np.clip(paper2 * (0.82 + 0.25 * shade)[..., None], 0, 1)
     rgb = np.where(cn[..., None], cn_rgb, np.where(land[..., None], nb_rgb, sea))
-    beyond = (lon < BX[0]) | (lon > BX[2]) | (lat < BX[1]) | (lat > BX[3])  # no elevation downloaded there
+    beyond = (lon < DBX[0]) | (lon > DBX[2]) | (lat < DBX[1]) | (lat > DBX[3])  # no elevation downloaded there
     rgb = np.where(beyond[..., None], paper2, rgb)
     # paper grain
     rng = np.random.default_rng(7)
     grain = ndimage.gaussian_filter(rng.standard_normal((H, W)).astype(np.float32), 1.2) * 0.025
     rgb = np.clip(rgb + grain[..., None], 0, 1)
-    Image.fromarray((rgb * 255 + 0.5).astype(np.uint8)).save(os.path.join(OUT, 'relief.webp'), quality=82, method=6)
+    if '--relief' in sys.argv:
+        Image.fromarray((rgb * 255 + 0.5).astype(np.uint8)).save(os.path.join(OUT, 'relief.webp'), quality=82, method=6)
     json.dump({'xmin': xmin, 'xmax': xmax, 'ymin': ymin, 'ymax': ymax, 'w': W, 'h': H},
               open(os.path.join(OUT, 'relief.json'), 'w'))
-    print('relief', W, H, os.path.getsize(os.path.join(OUT, 'relief.webp')) // 1024, 'KB')
+    print('relief frame', W, H)
     # elevation grid for the ink map (mountain glyphs, sea): half resolution, same Albers frame as relief.json.
     # R = sqrt(elevation / 6000 m) on land (at least 1), 0 = sea; G = 255 inside China, 0 outside
     eh = ndimage.zoom(np.maximum(h, 0), 0.5, order=1)

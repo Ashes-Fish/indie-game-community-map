@@ -102,6 +102,7 @@ export class UI {
     const w = innerWidth, hh = innerHeight;
     const sc = THREE.MathUtils.clamp(1.25 - dist / 520, 0.86, 1.12) * (this.mobile ? 0.92 : 1);
     for (const b of this.banners) {
+      b.pos.y = b.city.y + (b.city.top || 5.2);   // the skyline is built after the UI (scene.js buildPatch)
       const p = this.project(b.pos, cam, w, hh);
       b.el.style.display = p.ok && dist < 1100 ? '' : 'none';   // national view: the ink map carries the city seals
       if (p.ok) b.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-100%) scale(${sc})`;

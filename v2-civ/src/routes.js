@@ -1,7 +1,7 @@
 // Ribbons draped on the terrain: thin rivers (canal, Huangpu…), roads, and the Ludere trade route with caravans.
 import * as THREE from 'three';
 import { GLSL_COMMON } from './glsl.js';
-import { toWorld, hash2, REGION_ID } from './config.js';
+import { toWorld, hash2 } from './config.js';
 import { CN_CITIES } from './cn.js';
 import { Builder, makeMaterials } from './kit.js';
 import { fogPatch } from './props.js';
@@ -93,9 +93,9 @@ export function buildRivers(world, rivers, shared) {
   return group;
 }
 
-// other regions: each community city links to its two nearest towns (any prefecture seat within ~160 km)
-function nearRoutes(cities) {
-  const towns = CN_CITIES.map((c) => toWorld(c.lon, c.lat)).filter(([x, z]) => Math.abs(x) < 280 && Math.abs(z) < 250);
+// other patches: each community city links to its two nearest towns (any prefecture seat within ~160 km)
+function nearRoutes(world, cities) {
+  const towns = CN_CITIES.map((c) => toWorld(c.lon, c.lat)).filter(([x, z]) => world.contains(x, z, 20));
   const seen = new Set(), routes = [];
   for (const c of cities) {
     const near = towns.map((p) => [p, Math.hypot(p[0] - c.x, p[1] - c.z)]).filter(([, d]) => d > 20 && d < 160)
@@ -115,7 +115,7 @@ function nearRoutes(cities) {
 export function buildRoads(world, cities, shared) {
   const C = Object.fromEntries(cities.map((c) => [c.id, [c.x, c.z]]));
   const W = (lo, la) => toWorld(lo, la);
-  const routes = REGION_ID !== 'yrd' ? nearRoutes(cities) : [
+  const routes = world.id !== 'yrd' || !C.changshu ? nearRoutes(world, cities) : [
     [C.nanjing, W(119.15, 32.08), W(119.45, 32.05), W(119.7, 31.93), C.changzhou],
     [C.changzhou, W(120.3, 31.6), W(120.6, 31.33), W(121.0, 31.3), C.shanghai],
     [W(120.6, 31.33), W(120.7, 31.5), C.changshu],

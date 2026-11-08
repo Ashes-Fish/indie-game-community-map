@@ -1,12 +1,13 @@
 import raw from '../../site/data/communities.json';
 
 import { BUILTIN_STYLES } from './models.js';
-import { REGION_ID } from './config.js';
-import { resolveCity, cityId, regionOfCity } from './cn.js';
+import { resolveCity, cityId } from './cn.js';
+import { patchOfLonLat } from './patches.js';
 
-// Cities of the current 3D region. color = territory (civ) colour, color2 = secondary trim.
+// Every city in the country that hosts a community. color = territory (civ) colour, color2 = secondary trim.
 // Radius is computed from the community count (layout.js); county = 县级市, radiusOverride = manual size.
-// 长三角 is hand-tuned (colours, landmarks); other regions list every city that hosts a community there.
+// 长三角 is hand-tuned (colours, landmarks); the rest are generated. gi = national slot (territory colour index − 1),
+// patch = the land patch (patches.js) the city stands in.
 const YRD_CITIES = [
   { id: 'nanjing', name: '南京', lon: 118.79, lat: 32.04, color: '#8e5ad6', color2: '#f3d27a', landmark: 'gate', big: true },
   { id: 'changzhou', name: '常州', lon: 119.97, lat: 31.80, color: '#e8862e', color2: '#1d2a48', landmark: 'tianning' },
@@ -16,17 +17,20 @@ const YRD_CITIES = [
 ];
 const PALETTE = [['#8e5ad6', '#f3d27a'], ['#e8862e', '#1d2a48'], ['#1fb39a', '#f4f1e4'], ['#3a78c8', '#f2d27a'],
   ['#c2457a', '#f6e7c8'], ['#2e9e5b', '#f3d27a'], ['#c9a227', '#1d2a48'], ['#d43f3a', '#f6d36b']];
-function regionCities() {
-  const out = new Map();
+function nationalCities() {
+  const out = new Map(YRD_CITIES.map((c) => [c.id, c]));
   for (const r of raw) {
     const res = resolveCity(r);
-    if (!res || regionOfCity(res.city) !== REGION_ID) continue;
+    if (!res) continue;
     const c = res.city, id = cityId(c);
     if (!out.has(id)) out.set(id, { id, name: c.s, lon: c.lon, lat: c.lat, big: c.big, county: !!c.county });
   }
-  return [...out.values()].map((c, i) => ({ ...c, color: PALETTE[i % PALETTE.length][0], color2: PALETTE[i % PALETTE.length][1] }));
+  let k = 0;
+  return [...out.values()]
+    .map((c) => (c.color ? c : { ...c, color: PALETTE[k % PALETTE.length][0], color2: PALETTE[k++ % PALETTE.length][1] }))
+    .map((c, gi) => ({ ...c, gi, patch: patchOfLonLat(c.lon, c.lat)?.id ?? null }));
 }
-export const CITIES = REGION_ID === 'yrd' ? YRD_CITIES : regionCities();
+export const CITIES = nationalCities();
 // every city in the country that hosts a community (short names), for the national ink map
 export const HUB_CITIES = [...new Set(raw.map((r) => resolveCity(r)).filter(Boolean).map((r) => r.city.s))];
 

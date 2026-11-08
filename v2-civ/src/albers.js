@@ -1,5 +1,5 @@
 // Albers equal-area conic used by the national map (central meridian 105°E, standard parallels 25°N / 47°N,
-// spherical earth, km). Keep in step with scripts/bake_china.py, which bakes relief.webp in this projection.
+// spherical earth, km). Keep in step with scripts/bake_china.py and scripts/geo.py, which bake in this projection.
 const R = 6371, LAM0 = (105 * Math.PI) / 180;
 const P1 = (25 * Math.PI) / 180, P2 = (47 * Math.PI) / 180;
 const N = (Math.sin(P1) + Math.sin(P2)) / 2;
@@ -22,3 +22,9 @@ export function albersInv(x, y) {
 
 // cone constant n, for the meridian convergence angle n·(λ − 105°)
 export const ALBERS_N = N;
+
+// The national 3D world frame: Albers km, x east, z south, origin on the central meridian at y = Z0 (≈ 36°N)
+// so coordinates stay within ±3600 km (float precision in shaders). 1 unit = 1 km.
+export const Z0 = 4000;
+export const toGlobal = (lon, lat) => { const [x, y] = albers(lon, lat); return [x, Z0 - y]; };
+export const fromGlobal = (x, z) => albersInv(x, Z0 - z);

@@ -20,7 +20,7 @@ BLENDER=/path/to/blender sh build_modern.sh cyber cbd_big_a   # 只做其中几�
 ```sh
 P=/path/to/blender/4.5/python/bin/python.exe
 $P -m pip install --target /path/to/pydeps pillow scipy
-PYTHONPATH=/path/to/pydeps $P scripts/bake_region.py xian
+PYTHONPATH=/path/to/pydeps $P scripts/bake_patch.py xian
 ```
 
 ## A：Blender 脚本建模（`blender/`，P1 古建对比测试）
