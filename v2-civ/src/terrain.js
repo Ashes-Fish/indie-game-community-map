@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { XMIN, XMAX, ZMIN, ZMAX, EXAG, EXP } from './config.js';
 import { GLSL_COMMON } from './glsl.js';
 
+// territory colour slots (index 0 = no owner), so at most MAX_OWNERS - 1 cities in one map
+export const MAX_OWNERS = 32;
+
 const S = (hex) => { const c = new THREE.Color(hex); return `vec3(${c.r.toFixed(4)},${c.g.toFixed(4)},${c.b.toFixed(4)})`; };
 
 const FRAG_PARS = /* glsl */`
@@ -10,8 +13,8 @@ uniform sampler2D uWater;
 uniform sampler2D uNormalTex;
 uniform sampler2D uInk;
 uniform float uCamDist;
-uniform vec3 uOwnCol[8];
-uniform vec3 uOwnCol2[8];
+uniform vec3 uOwnCol[${MAX_OWNERS}];
+uniform vec3 uOwnCol2[${MAX_OWNERS}];
 uniform vec2 uHiHex;
 uniform float uHi;
 uniform float uGrid;

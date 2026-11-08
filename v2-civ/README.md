@@ -11,7 +11,9 @@ npm run dev      # 开发预览
 npm run build    # 产物在 dist/，任何静态服务器都能开，例如 npx serve dist
 ```
 
-URL 参数（调试/截图用）：`?instant` 跳过开场动画，`?view=hangzhou&d=60` 直接看某城，`?open=cyberia` 打开某社团面板，`?q=low` 强制手机画质。
+URL 参数（调试/截图用）：`?instant` 跳过开场动画，`?view=hangzhou&d=60` 直接看某城，`?open=cyberia` 打开某社团面板，`?q=low` 强制手机画质，`?mock=shanghai:40` 加占位社群测试城市分档。
+
+城市范围按社群数自动分档、社群自动落位，规则和新增社群的流程见 `docs/城市规模与据点方案.md`。
 
 ## 数据来源
 
