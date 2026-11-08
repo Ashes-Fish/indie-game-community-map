@@ -27,6 +27,8 @@ function regionCities() {
   return [...out.values()].map((c, i) => ({ ...c, color: PALETTE[i % PALETTE.length][0], color2: PALETTE[i % PALETTE.length][1] }));
 }
 export const CITIES = REGION_ID === 'yrd' ? YRD_CITIES : regionCities();
+// every city in the country that hosts a community (short names), for the national ink map
+export const HUB_CITIES = [...new Set(raw.map((r) => resolveCity(r)).filter(Boolean).map((r) => r.city.s))];
 
 // Hand-tuned extras for known communities: model = district look; toward = real address direction (lon,lat).
 // Communities without an entry get a key and a built-in model derived from their name.

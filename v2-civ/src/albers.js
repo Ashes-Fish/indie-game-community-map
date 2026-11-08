@@ -19,3 +19,6 @@ export function albersInv(x, y) {
   const lat = Math.asin(Math.max(-1, Math.min(1, (C - ((rho * N) / R) ** 2) / (2 * N))));
   return [((LAM0 + th / N) * 180) / Math.PI, (lat * 180) / Math.PI];
 }
+
+// cone constant n, for the meridian convergence angle n·(λ − 105°)
+export const ALBERS_N = N;

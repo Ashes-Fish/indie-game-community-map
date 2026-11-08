@@ -103,7 +103,7 @@ export class UI {
     const sc = THREE.MathUtils.clamp(1.25 - dist / 520, 0.86, 1.12) * (this.mobile ? 0.92 : 1);
     for (const b of this.banners) {
       const p = this.project(b.pos, cam, w, hh);
-      b.el.style.display = p.ok ? '' : 'none';
+      b.el.style.display = p.ok && dist < 1100 ? '' : 'none';   // national view: the ink map carries the city seals
       if (p.ok) b.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-100%) scale(${sc})`;
     }
     const showTags = dist < 150;
@@ -119,8 +119,9 @@ export class UI {
     for (const l of this.labels) {
       const p = this.project(l.pos, cam, w, hh);
       const fade = l.cls.includes('wonder') ? 1 : THREE.MathUtils.clamp((dist - 60) / 80, 0, 1);
-      l.el.style.display = p.ok && fade > 0.02 ? '' : 'none';
-      if (p.ok) { l.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-50%)`; l.el.style.opacity = fade; }
+      const fadeFar = 1 - THREE.MathUtils.clamp((dist - 700) / 300, 0, 1);
+      l.el.style.display = p.ok && fade * fadeFar > 0.02 ? '' : 'none';
+      if (p.ok) { l.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-50%)`; l.el.style.opacity = fade * fadeFar; }
     }
   }
 

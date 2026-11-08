@@ -66,6 +66,10 @@ uniform vec3 uOwnCol2[${MAX_OWNERS}];
 uniform vec2 uHiHex;
 uniform float uHi;
 uniform float uGrid;
+uniform sampler2D uNat;
+uniform vec4 uNatRect;
+uniform float uNatOn;
+uniform vec3 uPaperMul;
 varying vec3 vWP;
 varying float vLift;
 varying float vH0;
@@ -383,6 +387,17 @@ const FRAG_MAIN = /* glsl */`
   pap = mix(pap, ${S('#2b2219')}, coastInk * 0.82);
   vec4 ink = texture2D(uInk, uvH);
   pap = mix(pap, ink.rgb, ink.a);
+  pap *= uPaperMul;
+  // M0: the national ink map is the paper beyond (and fading into) this region
+  if (uNatOn > 0.5) {
+    vec2 nuv = (p - uNatRect.xy) / (uNatRect.zw - uNatRect.xy);
+    vec2 ne = min(nuv, 1.0 - nuv) * (uNatRect.zw - uNatRect.xy);   // km inside the drawn map; plain paper beyond
+    vec3 nat = mix(C_PAPER * uPaperMul * 0.97, texture2D(uNat, clamp(nuv, 0.0, 1.0)).rgb, smoothstep(0.0, 120.0, min(ne.x, ne.y)));
+    nat *= 0.95 + 0.08 * fbm3(p * 0.012 + 7.0) + 0.03 * (vnoise(p * 1.7) - 0.5) * detail;
+    float de = min(min(p.x - WXMIN, WXMIN + WXSPAN - p.x), min(p.y - WZMIN, WZMIN + WZSPAN - p.y));
+    float inR = smoothstep(10.0, 70.0, de + (fbm3(p * 0.015) - 0.5) * 50.0);
+    pap = mix(nat, pap, inR);
+  }
   float burn = smoothstep(0.18, 0.475, fv) * (1.0 - rev);
   pap = mix(pap, ${S('#7a4a22')}, burn * burn * 0.75);
   float charL = smoothstep(0.40, 0.472, fv) * (1.0 - rev);
@@ -462,8 +477,9 @@ export function buildTerrainMesh(world, shared, step, mobile) {
 
   // outer paper ring
   const outer = new THREE.Shape();
-  const E = 2600;
-  outer.moveTo(-E, -E); outer.lineTo(E, -E); outer.lineTo(E, E); outer.lineTo(-E, E); outer.lineTo(-E, -E);
+  // shape y is world -z (the shape is rotated onto the ground below)
+  const [x0, z0, x1, z1] = shared.paperRect || [-2600, -2600, 2600, 2600];
+  outer.moveTo(x0, -z1); outer.lineTo(x1, -z1); outer.lineTo(x1, -z0); outer.lineTo(x0, -z0); outer.lineTo(x0, -z1);
   const hole = new THREE.Path();
   hole.moveTo(XMIN + 0.5, ZMIN + 0.5); hole.lineTo(XMIN + 0.5, ZMAX - 0.5); hole.lineTo(XMAX - 0.5, ZMAX - 0.5); hole.lineTo(XMAX - 0.5, ZMIN + 0.5); hole.lineTo(XMIN + 0.5, ZMIN + 0.5);
   outer.holes.push(hole);

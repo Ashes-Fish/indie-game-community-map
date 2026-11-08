@@ -8,6 +8,9 @@ export class CivCamera {
     this.cam = camera; this.dom = dom;
     this.minD = opts.minD ?? 30; this.maxD = opts.maxD ?? 470;
     this.bounds = opts.bounds ?? { x0: -215, x1: 195, z0: -175, z1: 165 };
+    // pitch reaches 68° at pitchD; beyond it (national zoom) it keeps rising toward farPitch at maxD
+    this.pitchD = opts.pitchD ?? this.maxD; this.farPitch = opts.farPitch ?? 68;
+    this.fixedBounds = !!opts.fixedBounds;
     this.target = new THREE.Vector3(-15, 0, 0);
     this.dist = 380; this.goalDist = 380;
     this.vel = new THREE.Vector2();
@@ -23,8 +26,9 @@ export class CivCamera {
   }
 
   pitch(d = this.dist) {
-    const t = smooth(Math.min(1, Math.max(0, (d - this.minD) / (this.maxD - this.minD))));
-    return THREE.MathUtils.degToRad(38 + 30 * t);
+    const t = smooth(Math.min(1, Math.max(0, (d - this.minD) / (this.pitchD - this.minD))));
+    const f = this.maxD > this.pitchD ? smooth(Math.min(1, Math.max(0, (d - this.pitchD) / (this.maxD - this.pitchD)))) : 0;
+    return THREE.MathUtils.degToRad(38 + 30 * t + (this.farPitch - 68) * f);
   }
 
   apply() {
@@ -121,7 +125,7 @@ export class CivCamera {
 
   clamp() {
     const b = this.bounds;
-    const k = 0.35 + 0.65 * (1 - (this.dist - this.minD) / (this.maxD - this.minD)); // allow wider pan when close
+    const k = this.fixedBounds ? 1 : 0.35 + 0.65 * (1 - (this.dist - this.minD) / (this.maxD - this.minD)); // allow wider pan when close
     const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
     const hx = (b.x1 - b.x0) / 2 * Math.max(0.35, k), hz = (b.z1 - b.z0) / 2 * Math.max(0.35, k);
     this.target.x = THREE.MathUtils.clamp(this.target.x, cx - hx, cx + hx);
@@ -143,7 +147,10 @@ export class CivCamera {
       this.target.x = f.from.x + (f.to.x - f.from.x) * e;
       this.target.z = f.from.z + (f.to.z - f.from.z) * e;
       this.target.y = f.from.y + (f.to.y - f.from.y) * e;
-      this.dist = this.goalDist = Math.min(this.maxD, f.from.d + (f.to.d - f.from.d) * e + lift);
+      // big zoom changes (country → street) interpolate in log space so every scale gets equal screen time
+      const r = f.to.d / f.from.d;
+      const d = r > 4 || r < 0.25 ? f.from.d * Math.pow(r, e) : f.from.d + (f.to.d - f.from.d) * e + lift;
+      this.dist = this.goalDist = Math.min(this.maxD, d);
       if (u >= 1) this.fly = null;
       this.apply();
       return true;

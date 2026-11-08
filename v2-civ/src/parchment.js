@@ -3,10 +3,10 @@ import * as THREE from 'three';
 import { XMIN, ZMIN, XMAX, ZMAX, toWorld, rng, REGION_ID } from './config.js';
 import { CN_CITIES } from './cn.js';
 
-const KAI = '"Kaiti SC","STKaiti","KaiTi","楷体","Songti SC","STSong",serif';
+export const KAI = '"Kaiti SC","STKaiti","KaiTi","楷体","Songti SC","STSong",serif';
 
 // skip: names of cities that get their own 3D city (banners), so the ink map doesn't label them twice
-export function buildInkTexture(world, rivers, maxSize, skip = []) {
+export function buildInkTexture(world, rivers, maxSize, skip = [], pal = undefined) {
   const CW = maxSize, CH = Math.round(maxSize * (ZMAX - ZMIN) / (XMAX - XMIN));
   const s = CW / (XMAX - XMIN); // px per km
   const c = document.createElement('canvas');
@@ -42,7 +42,7 @@ export function buildInkTexture(world, rivers, maxSize, skip = []) {
     const [px, py] = P(m.x, m.z);
     const w = (4.2 + Math.min(m.e, 1500) / 260) * s * (0.85 + R() * 0.3);
     const h = w * (0.48 + Math.min(m.e, 1500) / 3200 + R() * 0.1);
-    drawMountain(g, px, py, w, h, R, m.e > 700);
+    drawMountain(g, px, py, w, h, R, m.e > 700, pal);
   }
 
   // --- labels ---
@@ -122,7 +122,9 @@ export function buildInkTexture(world, rivers, maxSize, skip = []) {
   return t;
 }
 
-function drawMountain(g, x, y, w, h, R, high) {
+// pal: wash colours top → foot and ink (default = the 长三角 青绿 wash)
+const PAL = { high: 'rgba(88,128,122,0.95)', low: 'rgba(112,142,110,0.92)', mid: 'rgba(176,182,140,0.85)', foot: 'rgba(226,212,176,0.9)', ink: '34,26,18' };
+export function drawMountain(g, x, y, w, h, R, high, pal = PAL) {
   const n = high ? 3 : 2 + (R() < 0.5 ? 1 : 0);
   const peaks = [];
   for (let i = 0; i < n; i++) {
@@ -141,22 +143,22 @@ function drawMountain(g, x, y, w, h, R, high) {
     g.bezierCurveTo(pk.cx + pk.pw * 0.28, top, r - pk.pw * 0.12, y - pk.ph * 0.55, r, y);
     g.closePath();
     const gr = g.createLinearGradient(0, top, 0, y);
-    gr.addColorStop(0, high ? 'rgba(88,128,122,0.95)' : 'rgba(112,142,110,0.92)');
-    gr.addColorStop(0.65, 'rgba(176,182,140,0.85)');
-    gr.addColorStop(1, 'rgba(226,212,176,0.9)');
+    gr.addColorStop(0, high ? pal.high : pal.low);
+    gr.addColorStop(0.65, pal.mid);
+    gr.addColorStop(1, pal.foot);
     g.fillStyle = gr; g.fill();
-    g.strokeStyle = 'rgba(34,26,18,0.9)'; g.lineWidth = Math.max(0.9, pk.pw * 0.045); g.stroke();
+    g.strokeStyle = `rgba(${pal.ink},0.9)`; g.lineWidth = Math.max(0.9, pk.pw * 0.045); g.stroke();
     // texture strokes (皴法) on the shaded right flank
     g.beginPath();
     for (let k = 0; k < 3; k++) {
       const sx = pk.cx + pk.pw * (0.06 + k * 0.1), sy = top + pk.ph * (0.18 + k * 0.12);
       g.moveTo(sx, sy); g.quadraticCurveTo(sx + pk.pw * 0.08, sy + pk.ph * 0.25, sx + pk.pw * 0.03, sy + pk.ph * 0.5);
     }
-    g.strokeStyle = 'rgba(34,26,18,0.5)'; g.lineWidth = Math.max(0.6, pk.pw * 0.025); g.stroke();
+    g.strokeStyle = `rgba(${pal.ink},0.5)`; g.lineWidth = Math.max(0.6, pk.pw * 0.025); g.stroke();
   }
 }
 
-function compass(g, x, y, r) {
+export function compass(g, x, y, r) {
   g.save();
   g.strokeStyle = 'rgba(40,30,22,0.85)'; g.fillStyle = 'rgba(40,30,22,0.85)';
   g.lineWidth = r * 0.03;
@@ -179,7 +181,7 @@ function compass(g, x, y, r) {
   g.restore();
 }
 
-function cloud(g, x, y, r) {
+export function cloud(g, x, y, r) {
   g.save();
   g.strokeStyle = 'rgba(60,48,36,0.7)'; g.lineWidth = r * 0.05; g.fillStyle = 'rgba(246,238,215,0.75)';
   const lobes = [[-0.6, 0.1, 0.35], [-0.2, -0.15, 0.45], [0.3, -0.05, 0.4], [0.7, 0.12, 0.28]];

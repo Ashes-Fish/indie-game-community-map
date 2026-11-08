@@ -247,6 +247,15 @@ def relief(country, BX):
     json.dump({'xmin': xmin, 'xmax': xmax, 'ymin': ymin, 'ymax': ymax, 'w': W, 'h': H},
               open(os.path.join(OUT, 'relief.json'), 'w'))
     print('relief', W, H, os.path.getsize(os.path.join(OUT, 'relief.webp')) // 1024, 'KB')
+    # elevation grid for the ink map (mountain glyphs, sea): half resolution, same Albers frame as relief.json.
+    # R = sqrt(elevation / 6000 m) on land (at least 1), 0 = sea; G = 255 inside China, 0 outside
+    eh = ndimage.zoom(np.maximum(h, 0), 0.5, order=1)
+    lh = ndimage.zoom(land.astype(np.float32), 0.5, order=1) > 0.5
+    ch = ndimage.zoom(cn.astype(np.float32), 0.5, order=1) > 0.5
+    r = np.where(lh, np.maximum(1, np.sqrt(np.clip(eh / 6000.0, 0, 1)) * 255 + 0.5), 0).astype(np.uint8)
+    Image.fromarray(np.stack([r, np.where(ch, 255, 0).astype(np.uint8), np.zeros_like(r)], -1)).save(
+        os.path.join(OUT, 'elev.png'), optimize=True)
+    print('elev', r.shape, os.path.getsize(os.path.join(OUT, 'elev.png')) // 1024, 'KB')
 
 
 if __name__ == '__main__':

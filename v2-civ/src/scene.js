@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import './style.css';
 import { World, loadImage } from './world.js';
-import { CITIES, COMMUNITIES } from './data.js';
+import { CITIES, COMMUNITIES, HUB_CITIES } from './data.js';
 import { buildTerrainMesh, loadTerrainTextures, makeRippleTexture } from './terrain.js';
 import { buildInkTexture } from './parchment.js';
 import { CivCamera } from './camera.js';
@@ -18,11 +18,15 @@ import { REGIONS } from './regions.js';
 import { dumpPins } from './layout.js';
 import PINS from './layout-pins.json';
 import { MAX_OWNERS } from './terrain.js';
+import { buildNationalInk, paperMul, toLocal, PAPER_STYLES } from './natink.js';
 
 const BASE = import.meta.env.BASE_URL;
 const qs = new URLSearchParams(location.search);
 // 长三角 keeps its hand-made extras (黄山, 西湖, 运河, Ludere 商路, place labels, scripted tour); other regions are generic
 const YRD = REGION_ID === 'yrd';
+// M0 prototype of 方向 A (docs/全国一张世界方案.md): the national ink map is the fog paper, one camera from country to street
+const M0 = qs.has('m0');
+const PAPER = PAPER_STYLES[qs.get('paper')] ? qs.get('paper') : 'qinglv';
 const REGION_NAME = REGIONS[REGION_ID].name;
 document.title = `中国独立游戏社团地图 · ${REGION_NAME}`;
 document.querySelector('#loader .sub').textContent = REGION_NAME;
@@ -88,6 +92,7 @@ const shared = {
     uOwnCol: { value: Array.from({ length: MAX_OWNERS }, () => new THREE.Color(0, 0, 0)) },
     uOwnCol2: { value: Array.from({ length: MAX_OWNERS }, () => new THREE.Color(1, 1, 1)) },
     uHiHex: { value: new THREE.Vector2(999, 999) }, uHi: { value: 0 },
+    uNat: { value: null }, uNatRect: { value: new THREE.Vector4(0, 0, 1, 1) }, uNatOn: { value: 0 }, uPaperMul: { value: new THREE.Vector3(1, 1, 1) },
   },
 };
 const REVEAL_FINAL = 80 * 1.5;
@@ -103,7 +108,17 @@ function regionOverview() {
   return { x: (Math.min(...xs) + Math.max(...xs)) / 2, z: (Math.min(...zs) + Math.max(...zs)) / 2 + 4, d: mobile && portrait ? d * 1.6 : d };
 }
 
-const cam = new CivCamera(camera, canvas, { maxD: OVERVIEW.d + 40, minD: mobile ? 26 : 30 });
+// M0: whole-country view, framed on the mainland (Albers rotated into this region's frame by natink.toLocal)
+const NAT_VIEW = (() => {
+  const [x, z] = toLocal(105.5, 35.6);
+  const tv = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));   // fit ~5200 × 3700 km of mainland
+  return { x: portrait ? x + 500 : x, z, d: Math.max((portrait ? 3300 : 5200) / (2 * tv * camera.aspect), 3700 / (2 * tv)) * 0.98 };
+})();
+const cam = M0
+  ? new CivCamera(camera, canvas, { maxD: NAT_VIEW.d * 1.12, minD: mobile ? 26 : 30, pitchD: OVERVIEW.d + 40, farPitch: 80, fixedBounds: true,
+    bounds: { x0: NAT_VIEW.x - 2300, x1: NAT_VIEW.x + 2300, z0: NAT_VIEW.z - 1700, z1: NAT_VIEW.z + 1500 } })
+  : new CivCamera(camera, canvas, { maxD: OVERVIEW.d + 40, minD: mobile ? 26 : 30 });
+let farHide = [], farOn = false;
 let world, ui, post, trade, hs, dust, beams, props, boats, sites = [], smoke, birds, walkers, proxies = [], hovered = null;
 
 async function loadLogos() {
@@ -135,8 +150,18 @@ async function init() {
   shared.uniforms.uNormalTex.value = world.normalTex;
   await tick();
   progress(0.55, '正在研墨绘图…');
-  shared.uniforms.uInk.value = buildInkTexture(world, rivers.rivers, Q.ink, CITIES.map((c) => c.name));
-  scene.add(buildTerrainMesh(world, shared, Q.step, Q.mobile).group);
+  if (M0) {
+    const t0 = performance.now();
+    const nat = await buildNationalInk(BASE, PAPER, Q.mobile ? 2048 : 4096, HUB_CITIES);
+    window.__natMs = Math.round(performance.now() - t0);
+    shared.uniforms.uNat.value = nat.tex; shared.uniforms.uNatRect.value.copy(nat.rect); shared.uniforms.uNatOn.value = 1;
+    shared.uniforms.uPaperMul.value.copy(paperMul(PAPER));
+    const [x0, z0, x1, z1] = nat.rect.toArray();
+    shared.paperRect = [x0 - 6000, z0 - 6000, x1 + 6000, z1 + 6000];
+  }
+  shared.uniforms.uInk.value = buildInkTexture(world, rivers.rivers, Q.ink, CITIES.map((c) => c.name), M0 ? PAPER_STYLES[PAPER].mtn : undefined);
+  const terrainGroup = buildTerrainMesh(world, shared, Q.step, Q.mobile).group;
+  scene.add(terrainGroup);
   await tick();
   progress(0.72, '正在营建城郭…');
   const [hx, hz] = toWorld(118.17, 30.13); // 黄山
@@ -205,6 +230,8 @@ async function init() {
     const { makePost } = await postP;
     post = makePost(renderer, scene, camera);
   }
+  // M0 stand-in for LOD (M2): at country scale only the terrain is drawn and the shadow map is frozen
+  farHide = scene.children.filter((o) => o !== terrainGroup && !o.isLight && o.visible);
   progress(0.95, '即将完成…');
   renderer.compile(scene, camera);
   // window.__dbg.pins() prints the snapshot to commit as src/layout-pins.json after adding communities
@@ -260,7 +287,7 @@ cam.onHover = (x, y) => {
 function goChina() { location.href = `${BASE}?focus=${REGION_ID}`; }
 let outPush = 0, outT = 0;
 canvas.addEventListener('wheel', (e) => {
-  if (e.deltaY <= 0 || cam.goalDist < cam.maxD - 1) { outPush = 0; return; }
+  if (M0 || e.deltaY <= 0 || cam.goalDist < cam.maxD - 1) { outPush = 0; return; }
   const now = performance.now();
   if (now - outT > 900) outPush = 0;
   outT = now;
@@ -378,6 +405,15 @@ function start() {
     if (city) { cam.fly = null; cam.target.set(city.x - 2, 0, city.z + 4); cam.dist = cam.goalDist = +(qs.get('d') || 62); cam.apply(); }
     if (v === 'overview') { cam.fly = null; cam.target.set(OVERVIEW.x, 0, OVERVIEW.z); cam.dist = cam.goalDist = OVERVIEW.d; cam.apply(); }
   }
+  if (M0) {
+    finishIntroNow();
+    cam.fly = null; cam.target.set(NAT_VIEW.x, 0, NAT_VIEW.z); cam.dist = cam.goalDist = NAT_VIEW.d; cam.apply();
+    if (qs.has('tour')) {   // the continuous descent: country → 长三角 → 杭州 street level
+      const hz = CITIES.find((c) => c.id === 'hangzhou') || CITIES[0];
+      setTimeout(() => cam.flyTo(OVERVIEW.x, OVERVIEW.z, OVERVIEW.d, 4.2), 1200);
+      setTimeout(() => cam.flyTo(hz.x - 2, hz.z + 4, 46, 3.2), 6000);
+    }
+  }
   const fl = qs.get('fly'); // arriving from the national map: start wide, then fly down to the city
   if (fl) { const city = CITIES.find((c) => c.id === fl); finishIntroNow(); if (city) cam.flyTo(city.x, city.z + 6, 92, 1.8); }
   if (qs.has('cx')) { cam.fly = null; cam.target.set(+qs.get('cx'), +(qs.get('cy') || 0), +qs.get('cz')); cam.dist = cam.goalDist = +(qs.get('d') || 80); cam.apply(); }
@@ -432,6 +468,12 @@ function frame() {
   sc.left = -half; sc.right = half; sc.top = half; sc.bottom = -half; sc.near = 50; sc.far = 800;
   sc.updateProjectionMatrix();
   scene.fog.near = cam.dist * 1.15; scene.fog.far = cam.dist * 3.4;
+  if (M0) {   // keep depth precision across a 30 → 5000 km zoom
+    const near = Math.max(1, cam.dist / 150), far = Math.max(4000, cam.dist * 4);
+    if (near !== camera.near || far !== camera.far) { camera.near = near; camera.far = far; camera.updateProjectionMatrix(); }
+    const isFar = cam.dist > 1100;
+    if (isFar !== farOn) { farOn = isFar; for (const o of farHide) o.visible = !isFar; renderer.shadowMap.autoUpdate = !isFar; renderer.shadowMap.needsUpdate = true; }
+  }
   props.setDist(cam.dist);
   dust.update(dt); beams.update(dt); trade.update(dt); boats.update(dt); hs.update(U.uTime.value);
   dust.mat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() * 0.9;
