@@ -15,6 +15,14 @@ BLENDER=/path/to/blender sh build_modern.sh cyber cbd_big_a   # 只做其中几�
 
 预览图在系统临时目录的 `igcm-modern/` 里。城市中心贴图 2048（看得清幕墙格子），据点 1024。
 
+机器上没有 Python 时，`scripts/` 下的地形烘焙脚本也可以用 Blender 自带的 Python 跑（它带 numpy），另装 Pillow 和 SciPy 到单独目录，不动 Blender 本身：
+
+```sh
+P=/path/to/blender/4.5/python/bin/python.exe
+$P -m pip install --target /path/to/pydeps pillow scipy
+PYTHONPATH=/path/to/pydeps $P scripts/bake_region.py xian
+```
+
 ## A：Blender 脚本建模（`blender/`，P1 古建对比测试）
 
 `?asset=a|b` 切换雷峰塔。Blender 5.2（`~/Applications/Blender.app`），无界面运行：

@@ -1,6 +1,6 @@
-# v2-civ · 长三角《文明6》画风样片
+# v2-civ · 中国独立游戏社团地图（《文明6》画风）
 
-只做长三角一小块，用来判断画风。Vite + three.js，模型全部由代码程序化生成。
+远看是全国古舆图（`src/china.js`，2D），近看是 3D（`src/scene.js`）：有社群的城市按片区分成 7 个 3D 区域（长三角、京津、成渝、珠三角、关中、辽沈、闽南闽东，见 `src/data/regions.json`），一次只加载一个。Vite + three.js，建筑是 Blender 烘焙的 GLB（`assets-src/`）。方案见 `docs/全国版规划方案.md`。
 
 ## 怎么跑
 
@@ -11,22 +11,23 @@ npm run dev      # 开发预览
 npm run build    # 产物在 dist/，任何静态服务器都能开，例如 npx serve dist
 ```
 
-URL 参数（调试/截图用）：`?instant` 跳过开场动画，`?view=hangzhou&d=60` 直接看某城，`?cx=30&cz=-30&d=50` 看任意坐标，`?open=cyberia` 打开某社团面板，`?q=low` 强制手机画质，`?ao=0` 关掉顶点环境光遮蔽（对比用），`?mock=shanghai:40` 加占位社群测试城市分档。
+URL 参数：不带参数是全国地图，`?focus=yrd` 全国地图对准某区域；`?region=chengyu` 打开某 3D 区域，`&fly=chengdu` 进入后飞到某城（旧链接 `?view=`、`?open=` 会自动找到所在区域）。调试/截图用：`?instant` 跳过开场动画，`?view=hangzhou&d=60` 直接看某城，`?cx=30&cz=-30&d=50` 看任意坐标，`?open=cyberia` 打开某社团面板，`?q=low` 强制手机画质，`?ao=0` 关掉顶点环境光遮蔽（对比用），`?mock=shanghai:40` 加占位社群测试城市分档。
 
 城市范围按社群数自动分档、社群自动落位，规则和新增社群的流程见 `docs/城市规模与据点方案.md`。
 
 ## 数据来源
 
-- 高程：AWS Terrain Tiles（Terrarium，z9，含 SRTM/GEBCO 等），烘焙成 `public/data/height.png`。
-- 海岸、湖泊、长江：Terrarium 水深 + Natural Earth 10m（land / lakes / rivers），烘焙成水域距离场 `public/data/water.png`。运河、黄浦江、西湖为手绘近似。
+- 高程：AWS Terrain Tiles（Terrarium，z9，含 SRTM/GEBCO 等），每个区域烘焙成 `public/data/regions/<区域>/height.png`；高程上限按区域自动定（`regions.json` 的 `hmax`），地貌和山形按"高出本区域低地多少"判断，成都平原不会被当成山。
+- 海岸、湖泊、江河：Terrarium 水深 + Natural Earth 10m（land / lakes / rivers），烘焙成水域距离场 `water.png`。长三角的运河、黄浦江、西湖为手绘近似。
+- 全国地图：省界、国界、九段线和全部地级城市驻地来自 DataV.GeoAtlas（高德数据），江河湖泊来自 Natural Earth，地貌晕渲来自 Terrarium z6，烘焙成 `public/data/china/` 和 `src/data/china-cities.json`。**正式公开前要按《全国版规划方案》3.2 节换成标准地图数据。**
+- 重新烘焙（需要 numpy、Pillow、scipy；没有 Python 时可用 Blender 自带的 Python，见 `assets-src/README.md`）：`python scripts/bake_region.py [区域…]` 烘 3D 区域（自动下载高程和 Natural Earth），`python scripts/bake_china.py` 烘全国地图。原始数据放 `bake-raw/`，不进仓库。新增区域：在 `regions.json` 加一行（中心经纬度），再跑 `bake_region.py <区域>`。
 - 社团：直接读仓库 `site/data/communities.json`，logo 由 `site/images/` 缩成 256px webp。
-- 重新烘焙：`scripts/fetch_dem.py` 下载高程瓦片，Natural Earth 三个 geojson（`ne_10m_land`、`ne_10m_lakes`、`ne_10m_rivers_lake_centerlines`，从 `https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/<文件名>.geojson` 下载）放 `bake-raw/ne/`，再跑 `scripts/bake.py`。原始数据约 27 MB，不进仓库。
 
 ## 画面环境（P2）
 
 - **地表贴图**：`scripts/paint_textures.py` 程序化画 6 张 512² 无缝手绘贴图（草地、水田、林地、山石、沙滩、雪地），A 通道存高度，竖排成一张 `public/tex/terrain.webp`（约 500 KB），前端读成一张 2D 数组纹理。地形着色器按地貌、高程、坡度和噪声算各层权重，再按高度混合；地貌权重先经大幅噪声扭曲再取样，拉远看不到六边形马赛克。水田行向跟着每块田转，稻浪随风走。手机少采一层宏观纹理。改贴图：改脚本后 `python3 scripts/paint_textures.py --preview`（预览图在 /tmp/igcm-tex/），再把脚本打印的各层平均色填进 `terrain.js` 的 `M_*` 常量。
 - **水**：波纹法线图在加载时用正弦波叠加生成（不下载）；按水域距离场的切线方向做双相位流动，河道往东流，沿岸泡沫顺着海岸漂；浅水透出沙底和焦散，向岸推进的浪线，成片出现的波光。运河等细河用同一张波纹图沿河道流动。
-- **云**：`clouds.js`，迷雾边缘一圈文明6式积云（画布现画的 4 种云团，一次实例化绘制，全部动画在顶点着色器里），揭雾前陆地上盖一层云，揭到哪里散到哪里。地面、树、房子、建筑上有缓慢飘过的云影（`glsl.js` 的 `cloudShade`，拉远到全景时淡出）。
+- **云**：迷雾边缘的云团、开场云层和地面云影已去掉，未开拓区域只保留羊皮纸古舆图。
 - **生命感**（`life.js`）：树随风摆、阵风成片推过林子（顶点着色器），稻浪，村落和城里炊烟（粒子全在着色器里），路上行人戴斗笠、牛车，湖和城市上空的鸟群（翅膀在顶点着色器里扇），灯笼和窗光闪烁、霓虹偶尔跳闪。
 - **顶点环境光遮蔽**（`ao.js` + `ao.worker.js`）：`bakeAO(object3D, { radius, strength })` 对任意网格层级通用：先把长三角形细分，再在 worker 里体素化、每个顶点打半球射线，结果乘进顶点色并按几何指纹缓存。现在接在城市、社团建筑、西湖、树和民居上；以后新建筑（包括异步加载的 GLB）建好后调一次即可。手机关掉实时后期也有体积感。
 - **字体**：横幅、标题、社团名用思源宋体 Bold 子集（改名 IGCM Serif，OFL 要求改名），约 57 KB。改了社团数据或界面文案后在 `v2-civ` 下重跑 `python3 scripts/font_subset.py`（首次会下载字体到 `scripts/.cache/`，不提交）。

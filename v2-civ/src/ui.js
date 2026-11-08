@@ -8,7 +8,7 @@ const BANNER_ICONS = 6; // the rest show as "+N"; the full list is in the 社团
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 export class UI {
-  constructor({ cities, communities, sites, base, onPick, onSite, onCity, onReplay, mobile }) {
+  constructor({ cities, communities, sites, base, regionName, onPick, onSite, onCity, onReplay, onChina, mobile }) {
     this.root = document.getElementById('ui');
     this.root.style.setProperty('--frame', FRAME);
     this.root.style.setProperty('--frame-s', FRAME_S);
@@ -21,7 +21,7 @@ export class UI {
     document.body.appendChild(h('div', 'vignette'));
 
     // title
-    const title = h('div', 'title civ-panel', `<div class="seal">游</div><div><h1>中国独立游戏社团地图</h1><div class="sub">长三角 · ${communities.length} 个社团 · ${cities.length} 座城市</div></div>`);
+    const title = h('div', 'title civ-panel', `<div class="seal">游</div><div><h1>中国独立游戏社团地图</h1><div class="sub">${regionName} · ${communities.length} 个社团 · ${cities.length} 座城市</div></div>`);
     this.root.appendChild(title);
 
     // list
@@ -74,6 +74,9 @@ export class UI {
     const rp = h('div', 'btn civ-panel replay', `${icon('replay')}<span>重播建城</span>`);
     rp.onclick = onReplay;
     this.root.appendChild(rp);
+    const cb = h('div', 'btn civ-panel tochina', `${icon('map')}<span>全国地图</span>`);
+    cb.onclick = onChina;
+    this.root.appendChild(cb);
     this.root.appendChild(h('div', 'credit', '高程：AWS Terrain Tiles（SRTM 等）· 水系：Natural Earth · 社团数据：社团自填'));
     this.help = h('div', 'help civ-panel', (mobile ? [['drag', '单指拖动'], ['zoom', '双指缩放'], ['tap', '点社团看详情']] : [['drag', '拖拽平移'], ['zoom', '滚轮缩放'], ['tap', '点击社团查看详情']])
       .map(([k, t]) => `<span>${icon(k)}${t}</span>`).join(''));

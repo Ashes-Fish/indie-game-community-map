@@ -1,17 +1,25 @@
-// World: 1 unit = 1 km. x = east, z = south. Origin at 120.1E 31.1N.
-export const LON0 = 120.1, LAT0 = 31.1;
+import { REGIONS } from './regions.js';
+
+// One 3D region per page (?region=<id>, default 长三角); see regions.js. 1 unit = 1 km, x = east, z = south,
+// origin at the region's centre.
+export const REGION_ID = REGIONS[new URLSearchParams(location.search).get('region')] ? new URLSearchParams(location.search).get('region') : 'yrd';
+const R0 = REGIONS[REGION_ID];
+export const LON0 = R0.lon0, LAT0 = R0.lat0;
 export const KX = 111.32 * Math.cos(LAT0 * Math.PI / 180), KZ = 110.6;
 export const XMIN = -300, XMAX = 300, ZMIN = -270, ZMAX = 270;
 export const HW = 800, HH = 720;            // heightmap size (0.75 km/px)
 export const WW = 1200, WH = 1080;          // water SDF size (0.5 km/px)
-export const HMAX = 1900;                   // metres for height.png value 255
+export const HMAX = R0.hmax;                // metres for height.png value 255 (per region, set by the bake)
 export const EXAG = 5.4, EXP = 0.78;        // y = EXAG * (h/1000)^EXP
 export const HEX_R = 6.5;                   // pointy-top hex circumradius
 export const SQ3 = Math.sqrt(3);
 export const HEX_W = HEX_R * SQ3;           // flat-to-flat
 export const HEX_A = HEX_W / 2;             // apothem
 export const HEX_N = 64, HEX_OFF = 32;      // hex data texture size / index offset
-export const REGION = { w: 117.8, e: 122.4, s: 29.4, n: 32.8 };
+// lon/lat box of hexes that can be revealed (≈ 72 % of the scene, so the parchment frames it)
+export const REGION = REGION_ID === 'yrd' ? { w: 117.8, e: 122.4, s: 29.4, n: 32.8 }
+  : { w: LON0 + XMIN * 0.72 / KX, e: LON0 + XMAX * 0.72 / KX, s: LAT0 - ZMAX * 0.72 / KZ, n: LAT0 - ZMIN * 0.72 / KZ };
+export const DATA_DIR = `data/regions/${REGION_ID}/`;
 
 export const toWorld = (lon, lat) => [(lon - LON0) * KX, (LAT0 - lat) * KZ];
 export const elevToY = (m) => (m <= 0 ? 0 : EXAG * Math.pow(m / 1000, EXP));

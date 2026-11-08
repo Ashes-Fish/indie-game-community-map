@@ -148,7 +148,7 @@ export function buildProps(world, shared, Q, keepOut) {
       const spread = b === BIOME.HILLS || b === BIOME.WOOD || b === BIOME.MOUNTAIN ? 2.6 : 1.4;
       const x = ccx + (R() + R() - 1) * spread, z = ccz + (R() + R() - 1) * spread;
       if (!free(x, z)) continue;
-      if (b === BIOME.MOUNTAIN && world.elevM(x, z) > 900) continue;
+      if (b === BIOME.MOUNTAIN && world.relM(x, z) > 900) continue;
       const y = world.heightY(x, z);
       const isC = R() < conifP;
       const s = (0.8 + R() * 0.5) * (b === BIOME.HILLS || b === BIOME.MOUNTAIN ? 1.0 : 0.9);

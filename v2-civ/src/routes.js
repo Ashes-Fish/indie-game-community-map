@@ -1,7 +1,8 @@
 // Ribbons draped on the terrain: thin rivers (canal, Huangpu…), roads, and the Ludere trade route with caravans.
 import * as THREE from 'three';
 import { GLSL_COMMON } from './glsl.js';
-import { toWorld } from './config.js';
+import { toWorld, hash2, REGION_ID } from './config.js';
+import { CN_CITIES } from './cn.js';
 import { Builder, makeMaterials } from './kit.js';
 import { fogPatch } from './props.js';
 
@@ -92,10 +93,29 @@ export function buildRivers(world, rivers, shared) {
   return group;
 }
 
+// other regions: each community city links to its two nearest towns (any prefecture seat within ~160 km)
+function nearRoutes(cities) {
+  const towns = CN_CITIES.map((c) => toWorld(c.lon, c.lat)).filter(([x, z]) => Math.abs(x) < 280 && Math.abs(z) < 250);
+  const seen = new Set(), routes = [];
+  for (const c of cities) {
+    const near = towns.map((p) => [p, Math.hypot(p[0] - c.x, p[1] - c.z)]).filter(([, d]) => d > 20 && d < 160)
+      .sort((a, b) => a[1] - b[1]).slice(0, 2);
+    for (const [[x, z], d] of near) {
+      const key = [`${Math.round(c.x)},${Math.round(c.z)}`, `${Math.round(x)},${Math.round(z)}`].sort().join('|');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      // a gentle bend so roads don't read as ruler lines
+      const nx = -(z - c.z) / d, nz = (x - c.x) / d, bend = d * 0.08 * (hash2(Math.round(x), Math.round(z)) - 0.5) * 2;
+      routes.push([[c.x, c.z], [(c.x + x) / 2 + nx * bend, (c.z + z) / 2 + nz * bend], [x, z]]);
+    }
+  }
+  return routes;
+}
+
 export function buildRoads(world, cities, shared) {
   const C = Object.fromEntries(cities.map((c) => [c.id, [c.x, c.z]]));
   const W = (lo, la) => toWorld(lo, la);
-  const routes = [
+  const routes = REGION_ID !== 'yrd' ? nearRoutes(cities) : [
     [C.nanjing, W(119.15, 32.08), W(119.45, 32.05), W(119.7, 31.93), C.changzhou],
     [C.changzhou, W(120.3, 31.6), W(120.6, 31.33), W(121.0, 31.3), C.shanghai],
     [W(120.6, 31.33), W(120.7, 31.5), C.changshu],

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  XMIN, ZMIN, XMAX, ZMAX, HW, HH, WW, WH, HMAX, elevToY, HEX_R, HEX_W, HEX_N, HEX_DIRS, REGION,
+  XMIN, ZMIN, XMAX, ZMAX, HW, HH, WW, WH, HMAX, elevToY, HEX_R, HEX_W, HEX_N, HEX_DIRS, REGION, DATA_DIR, LON0, LAT0, KX, KZ, REGION_ID,
   hexCenter, hexIndex, hexFromIndex, worldToHex, toWorld, hexDist, hash2,
 } from './config.js';
 import { layoutCities } from './layout.js';
@@ -23,7 +23,7 @@ async function loadPixels(url) {
 
 export class World {
   async load(base) {
-    const [hp, wp] = await Promise.all([loadPixels(base + 'data/height.png'), loadPixels(base + 'data/water.png')]);
+    const [hp, wp] = await Promise.all([loadPixels(base + DATA_DIR + 'height.png'), loadPixels(base + DATA_DIR + 'water.png')]);
     this.Hm = new Float32Array(HW * HH);
     this.Y = new Float32Array(HW * HH);
     for (let i = 0; i < HW * HH; i++) {
@@ -42,8 +42,21 @@ export class World {
     this.waterTex = new THREE.DataTexture(wbytes, WW, WH, THREE.RGBAFormat);
     this.waterTex.magFilter = THREE.LinearFilter; this.waterTex.minFilter = THREE.LinearFilter;
     this.waterTex.needsUpdate = true;
+    // lowland level: biome, peak and ink-mountain thresholds read elevation relative to it, so a 500 m basin
+    // (成都平原) is plain, not mountains. 长三角 keeps 0, its thresholds were tuned on absolute heights.
+    const lows = [];
+    if (REGION_ID !== 'yrd') {
+      for (let j = 0; j < HH; j += 6) for (let i = 0; i < HW; i += 6) {
+        if (this.sdf(XMIN + (i + 0.5) * 0.75, ZMIN + (j + 0.5) * 0.75) < 0) lows.push(this.Hm[j * HW + i]);
+      }
+      lows.sort((a, b) => a - b);
+    }
+    this.base = lows.length ? lows[Math.floor(lows.length * 0.25)] : 0;
     this.buildNormalTex();
   }
+
+  // elevation above the region's lowland level (metres)
+  relM(x, z) { return this.elevM(x, z) - this.base; }
 
   _bil(arr, w, h, fx, fy) {
     fx = Math.max(0, Math.min(w - 1.001, fx)); fy = Math.max(0, Math.min(h - 1.001, fy));
@@ -82,7 +95,7 @@ export class World {
     const N = HEX_N * HEX_N;
     const hx = this.hex = new Array(N);
     const inRegion = (x, z) => {
-      const lon = 120.1 + x / 95.33, lat = 31.1 - z / 110.6;
+      const lon = LON0 + x / KX, lat = LAT0 - z / KZ;
       return lon > REGION.w && lon < REGION.e && lat > REGION.s && lat < REGION.n;
     };
     // sample pattern inside a hex
@@ -98,7 +111,7 @@ export class World {
       for (const [dx, dz] of samples) {
         const x = cx + dx, z = cz + dz;
         const sd = this.sdf(x, z);
-        if (sd > 0) { wat++; seaS += this.sea(x, z); } else { land++; const e = this.elevM(x, z); sumE += e; maxE = Math.max(maxE, e); sumS += this.slope(x, z); }
+        if (sd > 0) { wat++; seaS += this.sea(x, z); } else { land++; const e = this.relM(x, z); sumE += e; maxE = Math.max(maxE, e); sumS += this.slope(x, z); }
       }
       const n = samples.length;
       hx[i] = {
@@ -193,6 +206,15 @@ export class World {
   }
 
   revealSources(cities) {
+    // the explored land: a disc round every city's territory, joined to neighbours within ~320 km (长三角 is hand-shaped)
+    const territory = cities.map((c) => ({ a: [c.x, c.z], rad: (c.radius + 1.6) * HEX_W }));
+    if (REGION_ID !== 'yrd') {
+      const links = [];
+      cities.forEach((a, i) => cities.slice(i + 1).forEach((b) => {
+        if (Math.hypot(a.x - b.x, a.z - b.z) < 320) links.push({ a: [a.x, a.z], b: [b.x, b.z], rad: 30 });
+      }));
+      return [...cities.map((c) => ({ a: [c.x, c.z], rad: 56 })), ...links, ...territory];
+    }
     const C = Object.fromEntries(cities.map((c) => [c.id, [c.x, c.z]]));
     const W = (lon, lat) => toWorld(lon, lat);
     return [
@@ -205,7 +227,7 @@ export class World {
       { a: C.hangzhou, b: W(119.4, 30.3), rad: 32 }, { a: W(119.4, 30.3), b: W(118.75, 30.15), rad: 28 },
       { a: W(118.75, 30.15), b: W(118.17, 30.13), rad: 28 }, { a: W(118.17, 30.13), rad: 36 },
       // always reveal a city's whole territory, however large it grows
-      ...cities.map((c) => ({ a: [c.x, c.z], rad: (c.radius + 1.6) * HEX_W })),
+      ...territory,
     ];
   }
 

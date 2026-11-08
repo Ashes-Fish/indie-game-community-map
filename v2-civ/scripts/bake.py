@@ -1,9 +1,12 @@
-# Bake height.png, water.png (signed distance field), rivers.json for the Yangtze-delta Civ-style map
+# Bake height.png, water.png (signed distance field), rivers.json and meta.json for one Civ-style map region.
+# Usage: bake.py <scripts dir> <dem dir> <natural earth dir> <out dir>   (region from geo.py / environment)
+# 长三角 (yrd) also gets its hand-authored canal, Huangpu and an exaggerated West Lake.
 import sys, json, math, numpy as np
 from PIL import Image, ImageDraw
 from scipy import ndimage
 sys.path.insert(0, sys.argv[1]); import geo
 D, NE, OUT = sys.argv[2], sys.argv[3], sys.argv[4]
+YRD = geo.REGION_ID == 'yrd'
 mos = np.load(D + '/mosaic.npy'); Z, X0, Y0 = map(int, open(D + '/mosaic.txt').read().split())
 SS = 3; RS = geo.RES / SS; WS, HS = geo.W * SS, geo.H * SS
 xs = geo.XMIN + (np.arange(WS) + 0.5) * RS; zs = geo.ZMIN + (np.arange(HS) + 0.5) * RS
@@ -32,31 +35,39 @@ def raster(features, filt=lambda p: True):
                 if max(p[0] for p in pts) < 0 or min(p[0] for p in pts) > WS or max(p[1] for p in pts) < 0 or min(p[1] for p in pts) > HS: continue
                 dr.polygon(pts, fill=255 if i == 0 else 0)
     return np.asarray(im) > 127
-land = raster(json.load(open(NE + '/ne_10m_land.geojson'))['features'])
-lakes = raster(json.load(open(NE + '/ne_10m_lakes.geojson'))['features'])
+land = raster(json.load(open(NE + '/ne_10m_land.geojson', encoding='utf-8'))['features'])
+lakes = raster(json.load(open(NE + '/ne_10m_lakes.geojson', encoding='utf-8'))['features'])
 
-# rivers: NE centerlines in region + hand-authored canal / Huangpu
+# rivers: NE centerlines in region (+ hand-authored canal / Huangpu in 长三角)
 riv = []
-B = (117.0, 28.7, 123.2, 33.5)
-for f in json.load(open(NE + '/ne_10m_rivers_lake_centerlines.geojson'))['features']:
+B = geo.bounds(10.0)
+for f in json.load(open(NE + '/ne_10m_rivers_lake_centerlines.geojson', encoding='utf-8'))['features']:
     p = f['properties']; gm = f['geometry']
+    if gm is None: continue
     lines = gm['coordinates'] if gm['type'] == 'MultiLineString' else [gm['coordinates']]
     for ln in lines:
         ln = [c for c in ln if B[0] <= c[0] <= B[2] and B[1] <= c[1] <= B[3]]
         if len(ln) < 2: continue
         name = p.get('name') or ''
         if p.get('featurecla') == 'Lake Centerline': continue
-        w = {'Yangtze': 2.4, 'Fuchun': 1.0}.get(name, 0.7)
-        riv.append({'name': name, 'w': w, 'pts': ln, 'carve': name in ('Yangtze', 'Fuchun')})
-canal = [(120.15,30.30),(120.21,30.46),(120.40,30.55),(120.62,30.70),(120.75,30.77),(120.70,30.90),(120.64,31.02),(120.64,31.16),(120.61,31.29),(120.45,31.43),(120.30,31.57),(120.12,31.69),(119.97,31.79),(119.75,31.90),(119.58,32.00),(119.45,32.18)]
-huangpu = [(120.95,31.06),(121.10,31.00),(121.27,30.96),(121.38,30.99),(121.45,31.05),(121.48,31.14),(121.50,31.22),(121.53,31.28),(121.51,31.37),(121.50,31.41)]
-qinhuai = [(118.85,31.95),(118.82,32.00),(118.78,32.02),(118.74,32.04)]
-riv.append({'name': 'canal', 'w': 0.55, 'pts': canal, 'carve': False})
-riv.append({'name': 'Huangpu', 'w': 0.9, 'pts': huangpu, 'carve': False})
-# West Lake (exaggerated) as polygon
-wl = [(120.122 + 0.026 * math.cos(a) * (1 + 0.12 * math.sin(3 * a)), 30.236 + 0.026 * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 40, endpoint=False)]
+        if YRD:
+            w = {'Yangtze': 2.4, 'Fuchun': 1.0}.get(name, 0.7)
+            carve = name in ('Yangtze', 'Fuchun')
+        else:  # NE scalerank: lower = bigger river
+            sr = p.get('scalerank') or 9
+            w = 2.2 if sr <= 2 else 1.3 if sr <= 4 else 0.7
+            carve = sr <= 4
+        riv.append({'name': name, 'w': w, 'pts': ln, 'carve': carve})
+wl = []
+if YRD:
+    canal = [(120.15,30.30),(120.21,30.46),(120.40,30.55),(120.62,30.70),(120.75,30.77),(120.70,30.90),(120.64,31.02),(120.64,31.16),(120.61,31.29),(120.45,31.43),(120.30,31.57),(120.12,31.69),(119.97,31.79),(119.75,31.90),(119.58,32.00),(119.45,32.18)]
+    huangpu = [(120.95,31.06),(121.10,31.00),(121.27,30.96),(121.38,30.99),(121.45,31.05),(121.48,31.14),(121.50,31.22),(121.53,31.28),(121.51,31.37),(121.50,31.41)]
+    riv.append({'name': 'canal', 'w': 0.55, 'pts': canal, 'carve': False})
+    riv.append({'name': 'Huangpu', 'w': 0.9, 'pts': huangpu, 'carve': False})
+    # West Lake (exaggerated) as polygon
+    wl = [(120.122 + 0.026 * math.cos(a) * (1 + 0.12 * math.sin(3 * a)), 30.236 + 0.026 * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 40, endpoint=False)]
 im = Image.new('L', (WS, HS), 0); dr = ImageDraw.Draw(im)
-dr.polygon([ss_px(*c) for c in wl], fill=255)
+if wl: dr.polygon([ss_px(*c) for c in wl], fill=255)
 for r in riv:
     if not r['carve']: continue
     pts = [ss_px(*c) for c in r['pts']]
@@ -65,7 +76,8 @@ for r in riv:
     for p in pts: dr.ellipse([p[0]-rr, p[1]-rr, p[0]+rr, p[1]+rr], fill=255)
 extra = np.asarray(im) > 127
 
-water = (hs < -0.5) | (~land & (hs < 2.0)) | lakes | extra
+ocean = ~land
+water = (hs < -0.5) | (ocean & (hs < 2.0)) | lakes | extra
 # clean specks
 lab, n = ndimage.label(water); sizes = ndimage.sum(np.ones_like(water), lab, range(1, n + 1))
 keep = np.zeros(n + 1, bool); keep[1:] = sizes >= 80; keep[np.unique(lab[lakes | extra])] = True; keep[0] = False
@@ -73,11 +85,10 @@ water = keep[lab]
 lab2, n2 = ndimage.label(~water); s2 = ndimage.sum(np.ones_like(water), lab2, range(1, n2 + 1))
 small_land = np.zeros(n2 + 1, bool); small_land[1:] = s2 < 12; water = water | small_land[lab2]
 
-# lake surface levels: inland water components get the 15th pct of their shoreline height
+# sea = water components that reach the Natural Earth ocean; inland ones get a lake surface level
 lab, n = ndimage.label(water)
-sea_lab = set(np.unique(lab[:, -1])) | set(np.unique(lab[-1, -40:]))
+sea_lab = set(np.unique(lab[water & ocean])) - {0}
 level = np.zeros(n + 1, np.float32)
-shore = ndimage.binary_dilation(water, iterations=2) & ~water
 for i in range(1, n + 1):
     if i in sea_lab: continue
     sl = ndimage.find_objects((lab == i).astype(int))[0]
@@ -86,12 +97,12 @@ for i in range(1, n + 1):
     vals = hs[sl][ring]
     level[i] = max(0.0, float(np.percentile(vals, 10))) if vals.size else 0.0
 hland = np.where(water, level[lab], np.maximum(hs, 0.0))
-# carve slight valley next to rivers so water sits below banks
 # downsample heights
 h = hland.reshape(geo.H, SS, geo.W, SS).mean(axis=(1, 3))
 hmx = hland.reshape(geo.H, SS, geo.W, SS).max(axis=(1, 3))
 h = 0.7 * h + 0.3 * hmx  # keep peaks a bit sharper
-HMAX = 1900.0
+# height range: 长三角 keeps 1900 m; elsewhere cover the highest peaks (rounded up to 100 m, at most 6000 m)
+HMAX = 1900.0 if YRD else float(min(6000.0, max(1500.0, math.ceil(float(np.percentile(h, 99.97)) / 100) * 100)))
 enc = np.clip(np.sqrt(np.clip(h, 0, HMAX) / HMAX) * 255 + 0.5, 0, 255).astype(np.uint8)
 Image.fromarray(enc).save(OUT + '/height.png', optimize=True)
 
@@ -103,9 +114,7 @@ sdf = np.where(water, dw - RS * 0.5, -(dl - RS * 0.5))
 H2, W2 = HS // 2, WS // 2
 sd2 = sdf[:H2 * 2, :W2 * 2].reshape(H2, 2, W2, 2).mean(axis=(1, 3))
 enc2 = np.clip(128 + sd2 * 10, 0, 255).astype(np.uint8)  # +-12.8 km range, 0.1 km steps
-labw, nw = ndimage.label(water)
-sea_ids = np.unique(np.concatenate([labw[:, -1], labw[-1, int(WS*0.7):], labw[0, int(WS*0.8):]]))
-sea = np.isin(labw, sea_ids[sea_ids > 0])
+sea = np.isin(lab, sorted(sea_lab)) if sea_lab else np.zeros_like(water)
 seaf = ndimage.gaussian_filter(sea.astype(np.float32), 6)
 sea2 = seaf[:H2 * 2, :W2 * 2].reshape(H2, 2, W2, 2).mean(axis=(1, 3))
 rgb = np.stack([enc2, np.clip(sea2 * 255 + 0.5, 0, 255).astype(np.uint8), np.zeros_like(enc2)], -1)
@@ -125,4 +134,5 @@ for r in riv:
     w = simp(w, 0.25)
     out.append({'name': r['name'], 'w': r['w'], 'water': r['carve'], 'pts': [[round(x, 2), round(z, 2)] for x, z in w]})
 json.dump({'rivers': out, 'westLake': [[round(v, 2) for v in geo.to_world(*c)] for c in wl]}, open(OUT + '/rivers.json', 'w'), separators=(',', ':'))
-print('height', enc.shape, 'water', enc2.shape, 'rivers', len(out))
+json.dump({'hmax': HMAX}, open(OUT + '/meta.json', 'w'))
+print('height', enc.shape, 'water', enc2.shape, 'rivers', len(out), 'hmax', HMAX)

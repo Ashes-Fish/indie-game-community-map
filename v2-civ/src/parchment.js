@@ -1,10 +1,12 @@
 // Ink drawing for the fog-of-war "old Chinese map" (古舆图) layer, drawn once into a canvas texture.
 import * as THREE from 'three';
-import { XMIN, ZMIN, XMAX, ZMAX, toWorld, rng } from './config.js';
+import { XMIN, ZMIN, XMAX, ZMAX, toWorld, rng, REGION_ID } from './config.js';
+import { CN_CITIES } from './cn.js';
 
 const KAI = '"Kaiti SC","STKaiti","KaiTi","楷体","Songti SC","STSong",serif';
 
-export function buildInkTexture(world, rivers, maxSize) {
+// skip: names of cities that get their own 3D city (banners), so the ink map doesn't label them twice
+export function buildInkTexture(world, rivers, maxSize, skip = []) {
   const CW = maxSize, CH = Math.round(maxSize * (ZMAX - ZMIN) / (XMAX - XMIN));
   const s = CW / (XMAX - XMIN); // px per km
   const c = document.createElement('canvas');
@@ -30,7 +32,7 @@ export function buildInkTexture(world, rivers, maxSize) {
     for (let x = XMIN + 3; x < XMAX - 3; x += sp) {
       const jx = x + (R() - 0.5) * sp * 0.9, jz = z + (R() - 0.5) * sp * 0.7;
       if (world.sdf(jx, jz) > -1.2) continue;
-      const e = world.elevM(jx, jz);
+      const e = world.relM(jx, jz);
       if (e < 140 + R() * 80) continue;
       glyphs.push({ x: jx, z: jz, e });
     }
@@ -76,29 +78,41 @@ export function buildInkTexture(world, rivers, maxSize) {
     g.fillText(name, px + dx * k * 2.4, py);
     g.restore();
   };
-  label(123.05, 30.75, '東海', 13, { vertical: true, bold: true, color: 'rgba(40,52,62,0.8)' });
-  label(122.55, 33.15, '黄海', 11, { vertical: true, bold: true, color: 'rgba(40,52,62,0.75)' });
-  label(117.55, 31.6, '巢湖', 4.5, { color: 'rgba(30,50,60,0.85)' });
-  label(119.25, 32.82, '高邮湖', 4.2, { color: 'rgba(30,50,60,0.85)' });
-  label(118.6, 33.32, '洪泽湖', 4.6, { color: 'rgba(30,50,60,0.85)' });
-  label(118.95, 29.58, '千岛湖', 4.0, { color: 'rgba(30,50,60,0.85)' });
-  label(117.82, 30.5, '九华山', 4.6, { spacing: 0.15 });
-  label(120.62, 29.72, '会稽山', 4.6, { spacing: 0.15 });
-  label(121.15, 29.62, '四明山', 4.6, { spacing: 0.15 });
-  label(120.95, 29.05, '天台山', 4.6, { spacing: 0.15 });
-  label(117.7, 31.15, '长 江', 5.2, { color: 'rgba(30,50,60,0.85)' });
-  label(119.75, 29.62, '富春江', 4.0, { color: 'rgba(30,50,60,0.85)' });
-  label(120.4, 33.0, '淮 扬', 6, { spacing: 0.3, color: 'rgba(38,28,20,0.6)' });
-  city(119.42, 32.39, '扬州'); city(120.86, 32.01, '南通'); city(119.92, 32.46, '泰州');
-  city(118.32, 32.30, '滁州', -1); city(118.38, 31.33, '芜湖', -1); city(118.76, 30.94, '宣城');
-  city(117.27, 31.86, '合肥'); city(120.58, 30.00, '绍兴'); city(121.55, 29.87, '宁波');
-  city(122.2, 30.0, '舟山'); city(118.33, 29.71, '屯溪', -1); city(120.16, 33.35, '盐城');
-  city(119.65, 29.08, '金华'); city(117.06, 30.53, '安庆');
+  if (REGION_ID === 'yrd') {
+    label(123.05, 30.75, '東海', 13, { vertical: true, bold: true, color: 'rgba(40,52,62,0.8)' });
+    label(122.55, 33.15, '黄海', 11, { vertical: true, bold: true, color: 'rgba(40,52,62,0.75)' });
+    label(117.55, 31.6, '巢湖', 4.5, { color: 'rgba(30,50,60,0.85)' });
+    label(119.25, 32.82, '高邮湖', 4.2, { color: 'rgba(30,50,60,0.85)' });
+    label(118.6, 33.32, '洪泽湖', 4.6, { color: 'rgba(30,50,60,0.85)' });
+    label(118.95, 29.58, '千岛湖', 4.0, { color: 'rgba(30,50,60,0.85)' });
+    label(117.82, 30.5, '九华山', 4.6, { spacing: 0.15 });
+    label(120.62, 29.72, '会稽山', 4.6, { spacing: 0.15 });
+    label(121.15, 29.62, '四明山', 4.6, { spacing: 0.15 });
+    label(120.95, 29.05, '天台山', 4.6, { spacing: 0.15 });
+    label(117.7, 31.15, '长 江', 5.2, { color: 'rgba(30,50,60,0.85)' });
+    label(119.75, 29.62, '富春江', 4.0, { color: 'rgba(30,50,60,0.85)' });
+    label(120.4, 33.0, '淮 扬', 6, { spacing: 0.3, color: 'rgba(38,28,20,0.6)' });
+    city(119.42, 32.39, '扬州'); city(120.86, 32.01, '南通'); city(119.92, 32.46, '泰州');
+    city(118.32, 32.30, '滁州', -1); city(118.38, 31.33, '芜湖', -1); city(118.76, 30.94, '宣城');
+    city(117.27, 31.86, '合肥'); city(120.58, 30.00, '绍兴'); city(121.55, 29.87, '宁波');
+    city(122.2, 30.0, '舟山'); city(118.33, 29.71, '屯溪', -1); city(120.16, 33.35, '盐城');
+    city(119.65, 29.08, '金华'); city(117.06, 30.53, '安庆');
 
-  // compass rose
-  compass(g, ...LL(123.0, 29.55), 14 * s);
-  // decorative clouds
-  for (const [lo, la, k] of [[122.9, 32.2, 1], [117.4, 29.3, 0.9], [121.9, 28.85, 1.1], [117.3, 33.2, 0.8]]) cloud(g, ...LL(lo, la), 9 * s * k);
+    // compass rose
+    compass(g, ...LL(123.0, 29.55), 14 * s);
+    // decorative clouds
+    for (const [lo, la, k] of [[122.9, 32.2, 1], [117.4, 29.3, 0.9], [121.9, 28.85, 1.1], [117.3, 33.2, 0.8]]) cloud(g, ...LL(lo, la), 9 * s * k);
+  } else {
+    // other regions: every prefecture seat that has no community of its own, compass in the south-east corner
+    const xs = (XMAX - XMIN) * 0.47, zs = (ZMAX - ZMIN) * 0.47;
+    for (const cc of CN_CITIES) {
+      if (skip.includes(cc.s)) continue;
+      const [x, z] = toWorld(cc.lon, cc.lat);
+      if (Math.abs(x) < xs && Math.abs(z) < zs && world.sdf(x, z) < 0) city(cc.lon, cc.lat, cc.s, x > xs * 0.6 ? -1 : 1);
+    }
+    compass(g, ...P(XMAX - 32, ZMAX - 34), 14 * s);
+    for (const [x, z, k] of [[XMAX - 40, ZMIN + 60, 1], [XMIN + 40, ZMAX - 40, 0.9], [XMIN + 45, ZMIN + 45, 0.8]]) cloud(g, ...P(x, z), 9 * s * k);
+  }
 
   const t = new THREE.CanvasTexture(c);
   t.flipY = false;
