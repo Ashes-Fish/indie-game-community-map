@@ -8,7 +8,8 @@ export { KAI, drawMountain, compass, cloud };
 
 // skip: names of cities that get their own 3D city (banners), so the ink map doesn't label them twice
 // Covers the land patch's rectangle (world.x0…z1); beyond it the national paper map (natink.js) takes over.
-export function buildInkTexture(world, rivers, maxSize, skip = [], pal = undefined) {
+export async function buildInkTexture(world, rivers, maxSize, skip = [], pal = undefined) {
+  const yieldNow = () => new Promise((r) => setTimeout(r, 0));
   const { x0: XMIN, z0: ZMIN, x1: XMAX, z1: ZMAX } = world;
   const CW = maxSize, CH = Math.round(maxSize * (ZMAX - ZMIN) / (XMAX - XMIN));
   const s = CW / (XMAX - XMIN); // px per km
@@ -41,12 +42,15 @@ export function buildInkTexture(world, rivers, maxSize, skip = [], pal = undefin
     }
   }
   glyphs.sort((a, b) => a.z - b.z);
+  let n = 0;
   for (const m of glyphs) {
     const [px, py] = P(m.x, m.z);
     const w = (4.2 + Math.min(m.e, 1500) / 260) * s * (0.85 + R() * 0.3);
     const h = w * (0.48 + Math.min(m.e, 1500) / 3200 + R() * 0.1);
     drawMountain(g, px, py, w, h, R, m.e > 700, pal);
+    if (++n % 100 === 0) await yieldNow();
   }
+  await yieldNow();
 
   // --- labels ---
   const label = (lon, lat, text, size, opt = {}) => {

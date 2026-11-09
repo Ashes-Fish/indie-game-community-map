@@ -9,8 +9,8 @@ import { makeTerrainMaterial } from './terrain.js';
 const TILE_PX = 512, MAX_L = 6, Y = -0.3;
 
 export class PaperTiles {
-  constructor(painter, shared, mobile) {
-    this.painter = painter; this.mobile = mobile;
+  constructor(painter, shared, mobile, renderer = null) {
+    this.painter = painter; this.mobile = mobile; this.renderer = renderer;
     const [x0, z0, x1, z1] = painter.rect;
     this.x0 = x0; this.z0 = z0; this.W = x1 - x0; this.H = z1 - z0;
     this.cap = mobile ? 28 : 56;                // tiles kept on the GPU
@@ -42,6 +42,7 @@ export class PaperTiles {
     const r = this.rect(L, i, j), k = this.key(L, i, j);
     this.pending.add(k);
     const t = { tex: await this.painter.paint(r, TILE_PX, TILE_PX), rect: new THREE.Vector4(...r), used: this.frame };
+    if (this.renderer) this.renderer.initTexture(t.tex);
     this.pending.delete(k);
     this.cache.set(k, t);
     this.evict();

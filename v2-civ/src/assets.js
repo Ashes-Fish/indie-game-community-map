@@ -8,6 +8,33 @@ const v = new URLSearchParams(location.search).get('asset');
 export const ASSET = v === 'a' || v === 'b' ? v : 'old';
 
 const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+let renderer = null;
+export function setRenderer(r) { renderer = r; }
+
+// Upload a model's textures one per task: a 2048² texture with mipmaps costs tens of ms, and a city's worth landing
+// in the first frame that draws them is a visible hitch. Resolves once every texture is on the GPU.
+const uploadQ = []; let uploading = false;
+function uploadTextures(root) {
+  const texs = new Set();
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) for (const k of ['map', 'emissiveMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap']) if (m[k]) texs.add(m[k]);
+  });
+  if (!renderer || !texs.size) return Promise.resolve();
+  return new Promise((res) => { uploadQ.push({ texs: [...texs], res }); pump(); });
+}
+function pump() {
+  if (uploading) return;
+  uploading = true;
+  const step = () => {
+    const job = uploadQ[0];
+    if (!job) { uploading = false; return; }
+    const t = job.texs.shift();
+    if (t) renderer.initTexture(t); else { uploadQ.shift(); job.res(); }
+    setTimeout(step, 0);
+  };
+  step();
+}
 const cache = new Map(); // 文件名 -> Promise<scene>：同一个模型只下载、解析一次，各处克隆（共享几何和材质）
 
 function load(file) {
@@ -19,8 +46,9 @@ function load(file) {
         const m = o.material;
         if (m.map) m.map.anisotropy = 4;
         if (m.emissiveIntensity > 1) m.emissiveIntensity *= 1.2; // 灯笼、霓虹进辉光
+        o.userData.noAO = true;   // AO is baked into the texture in Blender
       });
-      return gltf.scene;
+      return uploadTextures(gltf.scene).then(() => gltf.scene);
     }));
   }
   return cache.get(file);

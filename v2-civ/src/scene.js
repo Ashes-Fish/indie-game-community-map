@@ -4,6 +4,7 @@ import { World, loadImage } from './world.js';
 import { CITIES, COMMUNITIES, HUB_CITIES } from './data.js';
 import { PatchTerrain, loadTerrainTextures, makeRippleTexture, MAX_OWNERS } from './terrain.js';
 import { buildInkTexture } from './parchment.js';
+import { setRenderer } from './assets.js';
 import { CivCamera } from './camera.js';
 import { buildProps } from './props.js';
 import { buildCities, buildDistricts, buildWestLake } from './places.js';
@@ -14,7 +15,7 @@ import { UI } from './ui.js';
 import { buildSmoke, buildBirds, buildWalkers, livenBuildings } from './life.js';
 import { bakeAO } from './ao.js';
 import { HEX_R, toWorld } from './config.js';
-import { PATCHES, patchById } from './patches.js';
+import { PATCHES, patchById, patchAt } from './patches.js';
 import { dumpPins } from './layout.js';
 import PINS from './layout-pins.json';
 import { createPainter, paperMul, PAPER_STYLES } from './natink.js';
@@ -48,6 +49,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
+setRenderer(renderer);
 
 const scene = new THREE.Scene();
 const HAZE = new THREE.Color('#d9ccaa');
@@ -137,6 +139,7 @@ const patches = [];           // { world, P, cities, comms, sites, rivers, ps, t
 const proxies = [];
 const built = new Set();      // communities whose district has been raised (UI tags follow it)
 let ui, post, dust, beams, paper, painter, hovered = null, farOn = null;
+let last = performance.now();
 
 async function loadLogos() {
   const out = {};
@@ -172,7 +175,7 @@ async function init() {
   shared.uniforms.uRipple.value = makeRippleTexture();
   shared.uniforms.uNatBounds.value.set(...nat.rect);
   painter = nat;
-  paper = new PaperTiles(nat, shared, Q.mobile);
+  paper = new PaperTiles(nat, shared, Q.mobile, renderer);
   await paper.init();
   scene.add(paper.group);
   shared.uniforms.uNat.value = paper.root.tex; shared.uniforms.uNatRect.value.copy(paper.root.rect);
@@ -194,6 +197,7 @@ async function init() {
     world.uniforms.uNat = { value: paper.root.tex }; world.uniforms.uNatRect = { value: paper.root.rect.clone() };
     const ps = world.shared(shared);
     const terrain = new PatchTerrain(world, ps, Q.mobile);
+    terrain.onBuild = precompileMesh;
     scene.add(terrain.group);
     patches.push({ world, P: world.patch, cities, comms, sites: world.sites, rivers: await riversP[i], ps, terrain, mid: null, near: null, revealT: -0.25 * i, buildT: 0 });
     progress(0.5 + 0.3 * (i + 1) / worlds.length);
@@ -225,11 +229,41 @@ async function init() {
     const { makePost } = await postP;
     post = makePost(renderer, scene, camera);
   }
+  // the first patch and every shader program it needs, behind the loading bar: the first frames after the loader
+  // lifts then have nothing left to compile
+  progress(0.88, '正在营建城郭…');
+  await warmUp();
   progress(0.95, '即将完成…');
   // window.__dbg.pins() prints the snapshot to commit as src/layout-pins.json after adding communities
-  window.__dbg = { scene, cam, shared, paper, frame, renderer, camera, patches, COMMUNITIES, CITIES, select, focusCity, perf, NAT_VIEW, pins: () => JSON.stringify(dumpPins(CITIES, COMMUNITIES), null, 2), get post() { return post; } };
+  window.__dbg = { scene, cam, shared, paper, frame, buildLog, buildMid, buildNear, timed, renderer, camera, patches, COMMUNITIES, CITIES, select, focusCity, perf, NAT_VIEW, pins: () => JSON.stringify(dumpPins(CITIES, COMMUNITIES), null, 2), get post() { return post; } };
   start();
   scheduler();
+}
+
+// the first patch, built behind the loader: the one at the start view, else 长三角 (it has every kind of object)
+async function warmUp() {
+  const v = startView();
+  const pa = patches.find((p) => p.P === patchAt(v.x, v.z, -400)) || patches.find((p) => p.world.id === 'yrd') || patches[0];
+  if (!pa) return;
+  await buildMid(pa);
+  await buildNear(pa);
+  // the shadow-depth variants and the close-up post passes (screen-space AO) compile on first use: render the
+  // patch once from street level into an offscreen target, with the user's camera untouched
+  const saved = { x: cam.target.x, z: cam.target.z, d: cam.dist, fly: cam.fly };
+  const city = pa.cities[0];
+  cam.fly = null; cam.target.set(city.x, 0, city.z + 4); cam.dist = cam.goalDist = 60; cam.apply();
+  pa.revealT = T_REVEAL; pa.buildT = 0;
+  for (const pp of patches) { pp.terrain.update(camera, false, performance.now() + 2000); if (pp.mid) pp.mid.visible = true; if (pp.near) pp.near.visible = true; }
+  renderer.shadowMap.needsUpdate = true;
+  const t0 = performance.now();
+  // the post chain at street level (screen-space AO on, bloom, tilt-shift, SMAA) compiles its programs on this call;
+  // one frame at 1 × 1 pixel costs nothing but the compiles
+  if (post) { renderer.setSize(1, 1, false); post.setSize(1, 1); post.update(cam.dist); post.render(); renderer.setSize(innerWidth, innerHeight); post.setSize(innerWidth, innerHeight); }
+  else { const rt = new THREE.WebGLRenderTarget(4, 4); renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.setRenderTarget(null); rt.dispose(); }
+  buildLog.push(['warm-render', +(performance.now() - t0).toFixed(1)]);
+  cam.fly = saved.fly; cam.target.set(saved.x, 0, saved.z); cam.dist = cam.goalDist = saved.d; cam.apply();
+  farOn = null;
+  growDistricts(pa);
 }
 
 // ---------- detail levels (M2) ----------
@@ -237,6 +271,8 @@ async function init() {
 // once the camera is below country scale within MID_KM of it; its "near" tier (trees, villages, smoke, walkers, birds,
 // boats) once the camera is lower than NEAR_D close to it. One build at a time, nearest patch first.
 const MID_KM = 700, NEAR_D = 650, NEAR_KM = 350;
+const buildLog = [];
+const timed = (label, fn) => { const t0 = performance.now(); const r = fn(); buildLog.push([label, +(performance.now() - t0).toFixed(1)]); return r; };
 const rectDist = (P, x, z) => Math.hypot(Math.max(P.x0 - x, 0, x - P.x1), Math.max(P.z0 - z, 0, z - P.z1));
 function nextBuild() {
   const t = cam.fly ? cam.fly.to : cam.target, d = cam.fly ? cam.fly.to.d : cam.goalDist;
@@ -254,7 +290,7 @@ async function scheduler() {
     const job = nextBuild();
     if (!job) { await new Promise((r) => setTimeout(r, 150)); continue; }
     const [pa, tier] = job;
-    if (tier === 'mid') await buildMid(pa); else buildNear(pa);
+    if (tier === 'mid') await buildMid(pa); else await buildNear(pa);
     farOn = null;   // re-apply visibility for the new objects
     await tick();
   }
@@ -264,29 +300,41 @@ async function buildMid(pa) {
   const { world, ps, cities, comms, sites, rivers } = pa;
   const yrd = world.id === 'yrd';
   const inkSize = Math.min(2048, Math.round((world.x1 - world.x0) * Q.inkPerKm));
-  world.uniforms.uInk.value = buildInkTexture(world, rivers.rivers, inkSize, CITIES.map((c) => c.name), PAPER_STYLES[PAPER].mtn);
+  let t0 = performance.now();
+  const ink = await buildInkTexture(world, rivers.rivers, inkSize, CITIES.map((c) => c.name), PAPER_STYLES[PAPER].mtn);
+  buildLog.push([world.id + ' ink', +(performance.now() - t0).toFixed(1)]);
+  // a canvas uploads through a slow conversion path (~300 ms for 2048²); an ImageBitmap goes straight to the GPU
+  ink.image = await createImageBitmap(ink.image, { premultiplyAlpha: 'none' });
+  ink.needsUpdate = true;
+  world.uniforms.uInk.value = ink;
+  timed(world.id + ' ink-upload', () => renderer.initTexture(ink));
   await tick();
   // a sharp crop of the national paper for the patch's edges (about the resolution of the paper tiles around it)
   const r = [world.x0, world.z0, world.x1, world.z1], cap = Q.mobile ? 1024 : 2048, k = Math.min(Q.paperPerKm, cap / Math.max(r[2] - r[0], r[3] - r[1]));
   world.uniforms.uNat.value = await painter.paint(r, Math.round((r[2] - r[0]) * k), Math.round((r[3] - r[1]) * k));
   world.uniforms.uNatRect.value.set(...r);
+  timed(world.id + ' nat-upload', () => renderer.initTexture(world.uniforms.uNat.value));
   await tick();
   const g = new THREE.Group();
   const [hx, hz] = toWorld(118.17, 30.13); // 黄山
-  const cityGroup = buildCities(world, cities, ps).group;
-  const distGroup = buildDistricts(world, sites, cities, ps, logos, BASE);
-  const westLake = yrd ? buildWestLake(world, rivers) : new THREE.Group();
+  const cityGroup = timed(world.id + ' cities', () => buildCities(world, cities, ps).group);
+  await tick();
+  const distGroup = timed(world.id + ' districts', () => buildDistricts(world, sites, cities, ps, logos, BASE));
+  const westLake = timed(world.id + ' westlake', () => (yrd ? buildWestLake(world, rivers) : new THREE.Group()));
   g.add(cityGroup, distGroup, westLake);
-  // baked vertex AO (worker, async — buildings pop in darker a moment later) + lantern flicker
+  await tick();
+  // baked vertex AO (worker, async — buildings pop in darker a moment later) + lantern flicker. The tessellation
+  // before the worker runs on the main thread, so one building per turn.
   if (qs.get('ao') !== '0') {
     const strength = Q.post ? 0.5 : 0.75;   // desktop also has screen-space AO up close
-    for (const c of cities) bakeAO(c.group, { radius: 0.7, strength });
-    for (const s of sites) bakeAO(s.inner, { radius: 0.8, strength });
+    for (const c of cities) { timed(world.id + ' ao-prep', () => bakeAO(c.group, { radius: 0.7, strength })); await tick(); }
+    for (const s of sites) { timed(world.id + ' ao-prep', () => bakeAO(s.inner, { radius: 0.8, strength })); await tick(); }
     bakeAO(westLake, { radius: 0.6, strength });
   }
   for (const gg of [cityGroup, distGroup, westLake]) livenBuildings(gg, ps);
-  g.add(buildRivers(world, rivers.rivers, ps));
-  pa.roads = buildRoads(world, cities, ps);
+  g.add(timed(world.id + ' rivers', () => buildRivers(world, rivers.rivers, ps)));
+  await tick();
+  pa.roads = timed(world.id + ' roads', () => buildRoads(world, cities, ps));
   g.add(pa.roads);
   const C = (id) => cities.find((c) => c.id === id);
   const lud = comms.find((c) => c.key === 'ludere');
@@ -299,32 +347,136 @@ async function buildMid(pa) {
   const pgeo = new THREE.CylinderGeometry(HEX_R * 0.92, HEX_R * 0.92, 9, 6).rotateY(Math.PI / 6);
   for (const s of sites) { const m = new THREE.Mesh(pgeo, pmat); m.position.set(s.x, s.y + 2, s.z); m.userData.site = s; proxies.push(m); g.add(m); }
   for (const c of cities) { const m = new THREE.Mesh(pgeo, pmat); m.position.set(c.x, c.y + 2, c.z); m.userData.city = c; proxies.push(m); g.add(m); }
+  // shaders compile in the GPU driver's background (KHR_parallel_shader_compile) while we wait here, so the first
+  // frame that draws the new objects doesn't stall on them
+  await compileSpread(g, world.id + ' compile', pa);
   scene.add(g);
   pa.mid = g;
   growDistricts(pa);
 }
 
-function buildNear(pa) {
+// stand-ins for what WebGLShadowMap draws: program cache keys depend on type, packing, side and the object (instancing),
+// not on the material instance, so a few shared materials cover every caster. Kept alive: disposing them would drop
+// the programs from the cache again.
+const SHADOW_SIDE = { [THREE.FrontSide]: THREE.BackSide, [THREE.BackSide]: THREE.FrontSide, [THREE.DoubleSide]: THREE.DoubleSide };
+const depthStandIns = new Map();
+function shadowDepthFor(o) {
+  const src = Array.isArray(o.material) ? o.material[0] : o.material, side = SHADOW_SIDE[src.side] ?? THREE.BackSide;
+  // the shadow pass copies the caster's map and alphaTest onto the depth material (both change the program)
+  const key = (o.customDepthMaterial ? o.customDepthMaterial.uuid : 'std') + ':' + side + ':' + !!src.map + ':' + (src.alphaTest || 0);
+  let m = depthStandIns.get(key);
+  if (!m) {
+    m = o.customDepthMaterial ? o.customDepthMaterial.clone() : new THREE.MeshDepthMaterial({ depthPacking: THREE.BasicDepthPacking });
+    if (o.customDepthMaterial) { m.onBeforeCompile = o.customDepthMaterial.onBeforeCompile; m.customProgramCacheKey = o.customDepthMaterial.customProgramCacheKey; }
+    m.side = side; m.map = src.map || null; m.alphaTest = src.alphaTest || 0;
+    depthStandIns.set(key, m);
+  }
+  return m;
+}
+
+// Program variants depend on the render target bound at compile time (working colour space and no tone mapping when
+// drawing into a target, sRGB + ACES when drawing to the canvas). The post chain and the shadow pass draw into targets,
+// so compile against one, or the first real frame links everything a second time.
+const compileRT = new THREE.WebGLRenderTarget(2, 2);
+function compileAs(o, intoTarget) {
+  const prev = renderer.getRenderTarget();
+  if (intoTarget) renderer.setRenderTarget(compileRT);
+  const p = renderer.compileAsync(o, camera, scene);
+  renderer.setRenderTarget(prev);
+  return p;
+}
+function compileScene(o) { return compileAs(o, !!post); }
+// the shadow pass renders without the scene's fog, and fog is part of the program key: compile the stand-in the same way
+function compileShadow(o) {
+  const m = o.material, fog = scene.fog;
+  o.material = shadowDepthFor(o); scene.fog = null;
+  const p = compileAs(o, true);
+  o.material = m; scene.fog = fog;
+  return p;
+}
+// a mesh built outside the tier groups (terrain detail levels): compile its programs on creation, not on first draw
+function precompileMesh(o) {
+  compileScene(o);
+  if (o.castShadow) compileShadow(o);
+}
+
+// Draw one object into the 2 × 2 target from a throwaway camera, with culling off: vertex buffers, instance
+// matrices and textures get uploaded here rather than in the first visible frame. Cheap on the GPU at that size.
+const warmCam = camera.clone();
+// With shadow: true the shadow pass runs too, with the sun over this patch. The driver finishes the depth-only pipeline
+// for each caster on its first real shadow draw (tens of ms for a city), so that first draw happens here.
+const warmSun = { pos: new THREE.Vector3(), tgt: new THREE.Vector3() };
+function warmDraw(o, pa, shadow = false) {
+  const ov = patchOverview(pa.P);
+  warmCam.position.set(ov.x, ov.d, ov.z + ov.d * 0.4); warmCam.lookAt(ov.x, 0, ov.z);
+  warmCam.near = camera.near; warmCam.far = camera.far; warmCam.updateProjectionMatrix(); warmCam.updateMatrixWorld();
+  const culled = []; o.traverse((m) => { if (m.frustumCulled) { culled.push(m); m.frustumCulled = false; } });
+  const parent = o.parent, shadows = renderer.shadowMap.autoUpdate;
+  renderer.shadowMap.autoUpdate = shadow;
+  if (shadow) {
+    warmSun.pos.copy(sun.position); warmSun.tgt.copy(sun.target.position);
+    sun.position.set(ov.x, 0, ov.z).addScaledVector(SUN_DIR, 400); sun.target.position.set(ov.x, 0, ov.z);
+    const sc = sun.shadow.camera; sc.left = sc.bottom = -290; sc.right = sc.top = 290; sc.updateProjectionMatrix();
+    renderer.shadowMap.needsUpdate = true;
+  }
+  scene.add(o);
+  const prev = renderer.getRenderTarget();
+  renderer.setRenderTarget(compileRT);
+  renderer.render(scene, warmCam);
+  renderer.setRenderTarget(prev);
+  if (parent) parent.add(o); else scene.remove(o);
+  if (shadow) { sun.position.copy(warmSun.pos); sun.target.position.copy(warmSun.tgt); renderer.shadowMap.needsUpdate = true; }
+  renderer.shadowMap.autoUpdate = shadows;
+  for (const m of culled) m.frustumCulled = true;
+}
+
+// compile each child of a group on its own turn: the main-thread part (shader source + link submission) is spread
+// over frames, and the await lets the driver finish linking before the objects are first drawn
+async function compileSpread(g, label, pa) {
+  const t0 = performance.now();
+  let main = 0;
+  for (const child of g.children) {
+    const t1 = performance.now();
+    // districts grow in and props reveal over time: whatever is hidden now is drawn later, so compile it now
+    const hidden = []; child.traverse((o) => { if (!o.visible) { hidden.push(o); o.visible = true; } });
+    const ps = [compileScene(child)];   // the main-thread part runs synchronously here
+    // the shadow pass draws each caster with a depth material (its own, or the renderer's) on the flipped side:
+    // compile an equivalent here so the first shadow pass that includes it links nothing
+    child.traverse((o) => { if (o.isMesh && o.castShadow) ps.push(compileShadow(o)); });
+    main += performance.now() - t1;
+    await tick();
+    await Promise.all(ps);
+    if (pa) { const t2 = performance.now(); warmDraw(child, pa); main += performance.now() - t2; await tick(); }
+    for (const o of hidden) o.visible = false;
+  }
+  if (pa) { const t3 = performance.now(); warmDraw(g, pa, true); main += performance.now() - t3; await tick(); }
+  buildLog.push([label, +(performance.now() - t0).toFixed(1), 'main ' + main.toFixed(1)]);
+}
+
+async function buildNear(pa) {
   const { world, ps, cities, sites, rivers } = pa;
   const yrd = world.id === 'yrd';
   const g = new THREE.Group();
   const [hx, hz] = toWorld(118.17, 30.13); // 黄山
   const keepOut = [...cities.map((c) => ({ x: c.x, z: c.z, r: 5.4 })), ...sites.map((s) => ({ x: s.x, z: s.z, r: 4.3 })), ...(yrd ? [{ x: hx, z: hz, r: 7 }] : [])];
-  pa.props = buildProps(world, ps, Q, keepOut);
+  const t0 = performance.now();
+  pa.props = await buildProps(world, ps, Q, keepOut);
+  buildLog.push([world.id + ' props', +(performance.now() - t0).toFixed(1)]);
   // life: chimney smoke over villages and city lanes, walkers and ox carts on the roads, birds over lakes and towns
   const R = (k) => ((Math.sin(k * 91.7) * 43758.5) % 1 + 1) % 1;
   const emit = pa.props.houses.filter((h, i) => R(i) < (Q.mobile ? 0.12 : 0.22)).map((h, i) => ({ x: h.x + 0.2 * h.s, y: h.y + 0.62 * h.s * (h.sy || 1), z: h.z, ph: R(i + 0.5) }));
   for (const c of cities) for (let k = 0; k < 3; k++) emit.push({ x: c.x + (R(k + c.x) - 0.5) * 4, y: c.y + 0.6, z: c.z + (R(k * 3 + c.z) - 0.5) * 4, ph: R(k + 7) });
   pa.smoke = buildSmoke(emit, ps, Q);
-  pa.walkers = buildWalkers(world, pa.roads.userData.paths, Q);
+  pa.walkers = timed(world.id + ' walkers', () => buildWalkers(world, pa.roads.userData.paths, Q));
   const C = (id) => cities.find((c) => c.id === id);
   const birdAt = yrd && C('shanghai') && C('nanjing')
     ? [yrdOld(9, -12), toWorld(120.14, 30.24), [C('shanghai').x, C('shanghai').z], yrdOld(-20, -60), [C('nanjing').x, C('nanjing').z], yrdOld(60, 20)].map(([x, z]) => ({ x, z }))
     : cities.map((c) => ({ x: c.x, z: c.z }));
-  pa.birds = buildBirds(world, birdAt, ps, Q);
+  pa.birds = timed(world.id + ' birds', () => buildBirds(world, birdAt, ps, Q));
   const canal = rivers.rivers.find((r) => r.name === 'canal');
   pa.boats = canal ? buildBoats(world, canal) : { group: new THREE.Group(), update() {} };
   g.add(pa.props.group, pa.smoke.points, pa.walkers.group, pa.birds.mesh, pa.boats.group);
+  await compileSpread(g, world.id + ' compile-near', pa);
   scene.add(g);
   pa.near = g;
 }
@@ -434,7 +586,6 @@ function replay() {
   setTimeout(() => { patches.forEach((pa, i) => { pa.revealT = -0.25 * i; if (pa.mid) growDistricts(pa); }); }, 1600);
 }
 
-let last = performance.now();
 function start() {
   window.__readyAt = performance.now();
   document.getElementById('loader').classList.add('done');
@@ -512,9 +663,9 @@ function frame() {
     for (const pa of patches) if (pa.mid) pa.mid.visible = !isFar;
     renderer.shadowMap.autoUpdate = !isFar; renderer.shadowMap.needsUpdate = true;
   }
-  let budget = 2;   // terrain chunk builds per frame
+  const deadline = performance.now() + 5;   // ms of this frame for building finer terrain chunks
   for (const pa of patches) {
-    budget -= pa.terrain.update(camera, isFar, budget);
+    pa.terrain.update(camera, isFar, deadline);
     updatePatch(pa, dt, isFar);
   }
   dust.update(dt); beams.update(dt);

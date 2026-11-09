@@ -103,7 +103,9 @@ function peakGeo(seed) {
   return g;
 }
 
-export function buildProps(world, shared, Q, keepOut) {
+export async function buildProps(world, shared, Q, keepOut) {
+  const yieldNow = () => new Promise((r) => setTimeout(r, 0));
+  let hexN = 0;
   const R = rng(1234);
   const group = new THREE.Group();
   const mat = fogPatch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true }), shared);
@@ -127,6 +129,7 @@ export function buildProps(world, shared, Q, keepOut) {
   const AUT = ['#c9a63a', '#d28a2e', '#b8b24a'];
   const dens = Q.trees;
   for (const h of world.hex) {
+    if (++hexN % 400 === 0) await yieldNow();
     if (h.orderKm > 10) continue;
     const b = h.biome;
     let nTree = 0, conifP = 0.3, nHouse = 0;

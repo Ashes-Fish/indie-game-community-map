@@ -497,7 +497,7 @@ function gridGeometry(world, x0, z0, x1, z1, step, skirt = 0) {
 
 // A land patch's terrain in 128 km chunks, each drawn at one of three grid steps by its distance from the camera, plus
 // one coarse whole-patch mesh for country-scale views. Finer chunks are built on demand, a few per frame
-// (update's budget); until then a chunk shows the nearest level it has. The coarsest level casts no shadows.
+// (within update's time budget, nearest first); until then a chunk shows the nearest level it has. The coarsest level casts no shadows.
 export const CHUNK_KM = 128;
 export class PatchTerrain {
   constructor(world, shared, mobile) {
@@ -527,32 +527,35 @@ export class PatchTerrain {
     const m = this.mesh(gridGeometry(this.world, c.x0, c.z0, c.x1, c.z1, this.steps[l], 0.6));
     m.castShadow = l <= 1; m.visible = false;
     this.group.add(m);
+    if (this.onBuild) this.onBuild(m);
     return m;
   }
-  // far: country scale (whole-patch mesh only). Returns how many chunk levels it built.
-  update(cam, far, budget) {
+  // far: country scale (whole-patch mesh only). deadline: performance.now() value after which no more levels are built.
+  update(cam, far, deadline) {
     if (far !== this.far) {
       this.far = far;
       this.whole.visible = far;
       if (far) for (const c of this.chunks) { if (c.shown >= 0) c.lv[c.shown].visible = false; c.shown = -1; }
     }
-    if (far) return 0;
-    let built = 0;
+    if (far) return;
     const p = cam.position;
     for (const c of this.chunks) {
       const dx = Math.max(c.x0 - p.x, 0, p.x - c.x1), dz = Math.max(c.z0 - p.z, 0, p.z - c.z1);
-      const d = Math.hypot(dx, dz, p.y);
+      c.d = Math.hypot(dx, dz, p.y);
+    }
+    // nearest chunks get the budget first
+    for (const c of [...this.chunks].sort((a, b) => a.d - b.d)) {
+      const d = c.d;
       // a little hysteresis so a chunk on a threshold doesn't flip every frame
       const sl = c.shown, k = (t, lv) => (sl >= 0 && sl <= lv ? t * 1.08 : t);
       let want = d < k(this.near[0], 0) ? 0 : d < k(this.near[1], 1) ? 1 : 2;
-      if (!c.lv[want] && built < budget) { c.lv[want] = this.buildLevel(c, want); built++; }
+      if (!c.lv[want] && performance.now() < deadline) c.lv[want] = this.buildLevel(c, want);
       if (!c.lv[want]) want = [want, want + 1, want - 1, 2, 1, 0].find((l) => l >= 0 && l <= 2 && c.lv[l]);
       if (want !== c.shown) {
         if (c.shown >= 0) c.lv[c.shown].visible = false;
         c.lv[want].visible = true; c.shown = want;
       }
     }
-    return built;
   }
   dispose() { this.group.traverse((o) => o.geometry && o.geometry.dispose()); }
 }

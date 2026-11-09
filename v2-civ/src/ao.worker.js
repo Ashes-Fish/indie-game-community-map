@@ -1,6 +1,64 @@
-// AO worker: voxelise the building, then march a cosine-weighted hemisphere of rays from every unique vertex.
+// AO worker: transform each mesh into the building's frame, split long triangles so flat faces get interior vertices,
+// voxelise the building, then march a cosine-weighted hemisphere of rays from every unique vertex.
+// Message: { id, meshes: [{ attrs: [{ name, itemSize, array }], idx, matrix (column-major 4×4), maxEdge }], radius, rays }
+// Reply:   { id, geos: [tessellated attrs | null], aos: [Float32Array] }
+
+// split triangles longer than maxEdge (all attributes interpolated); returns non-indexed attrs
+function tessellate(attrs, idx, maxEdge) {
+  const names = attrs.map((a) => a.name), sizes = attrs.map((a) => a.itemSize);
+  const P = attrs.find((a) => a.name === 'position');
+  const nv = P.array.length / 3, nt = idx ? idx.length / 3 : nv / 3;
+  const out = attrs.map(() => []);
+  const vert = (vi) => attrs.map((a) => { const o = vi * a.itemSize, r = new Array(a.itemSize); for (let c = 0; c < a.itemSize; c++) r[c] = a.array[o + c]; return r; });
+  const emit = (vs) => vs.forEach((v, k) => { for (const x of v) out[k].push(x); });
+  const lerp = (a, b) => a.map((x, i) => (x + b[i]) / 2);
+  const split = (vs, depth) => {
+    const p = vs.map((v) => v[0]);
+    const e = [0, 1, 2].map((i) => Math.hypot(p[i][0] - p[(i + 1) % 3][0], p[i][1] - p[(i + 1) % 3][1], p[i][2] - p[(i + 1) % 3][2]));
+    const m = Math.max(...e);
+    if (m <= maxEdge || depth > 4) { for (const v of vs) emit(v); return; }
+    const i = e.indexOf(m), a = vs[i], b = vs[(i + 1) % 3], c = vs[(i + 2) % 3];
+    const mid = a.map((x, k) => lerp(x, b[k]));
+    split([a, mid, c], depth + 1); split([mid, b, c], depth + 1);
+  };
+  for (let t = 0; t < nt; t++) {
+    const vs = [0, 1, 2].map((j) => vert(idx ? idx[t * 3 + j] : t * 3 + j));
+    // position must come first for split(): reorder once
+    split(vs.map((v) => { const pi = names.indexOf('position'); return [v[pi], ...v.filter((_, k) => k !== pi)]; }), 0);
+  }
+  const order = ['position', ...names.filter((n) => n !== 'position')];
+  return order.map((n, k) => ({ name: n, itemSize: sizes[names.indexOf(n)], array: Float32Array.from(out[k]) }));
+}
+
+// positions by a 4×4 (column-major), normals by its inverse transpose
+function transform(pos, nrm, M) {
+  const n = pos.length / 3, P = new Float32Array(n * 3), N = new Float32Array(n * 3);
+  const a = M[0], b = M[4], c = M[8], d = M[1], e = M[5], f = M[9], g = M[2], h = M[6], i = M[10];
+  const det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g) || 1;
+  // inverse transpose of the 3×3
+  const n00 = (e * i - f * h) / det, n01 = -(d * i - f * g) / det, n02 = (d * h - e * g) / det;
+  const n10 = -(b * i - c * h) / det, n11 = (a * i - c * g) / det, n12 = -(a * h - b * g) / det;
+  const n20 = (b * f - c * e) / det, n21 = -(a * f - c * d) / det, n22 = (a * e - b * d) / det;
+  for (let k = 0; k < n; k++) {
+    const x = pos[k * 3], y = pos[k * 3 + 1], z = pos[k * 3 + 2];
+    P[k * 3] = a * x + b * y + c * z + M[12]; P[k * 3 + 1] = d * x + e * y + f * z + M[13]; P[k * 3 + 2] = g * x + h * y + i * z + M[14];
+    const u = nrm[k * 3], v = nrm[k * 3 + 1], w = nrm[k * 3 + 2];
+    let nx = n00 * u + n01 * v + n02 * w, ny = n10 * u + n11 * v + n12 * w, nz = n20 * u + n21 * v + n22 * w;
+    const l = Math.hypot(nx, ny, nz) || 1; N[k * 3] = nx / l; N[k * 3 + 1] = ny / l; N[k * 3 + 2] = nz / l;
+  }
+  return { pos: P, nrm: N };
+}
+
 self.onmessage = (e) => {
-  const { id, meshes, radius, rays } = e.data;
+  const { id, meshes: input, radius, rays } = e.data;
+  const geos = [], meshes = [];
+  for (const m of input) {
+    let attrs = m.attrs, idx = m.idx;
+    if (m.maxEdge > 0) { attrs = tessellate(attrs, idx, m.maxEdge); idx = null; geos.push(attrs); } else geos.push(null);
+    const pos = attrs.find((a) => a.name === 'position').array, nrm = attrs.find((a) => a.name === 'normal').array;
+    const t = transform(pos, nrm, m.matrix);
+    meshes.push({ pos: t.pos, nrm: t.nrm, idx });
+  }
   let x0 = 1e9, y0 = 1e9, z0 = 1e9, x1 = -1e9, y1 = -1e9, z1 = -1e9;
   for (const m of meshes) for (let i = 0; i < m.pos.length; i += 3) {
     const x = m.pos[i], y = m.pos[i + 1], z = m.pos[i + 2];
@@ -40,7 +98,7 @@ self.onmessage = (e) => {
     return grid[iz * nx * ny + iy * nx + ix];
   };
   const memo = new Map();
-  const out = meshes.map((m) => {
+  const aos = meshes.map((m) => {
     const P = m.pos, N = m.nrm, n = P.length / 3, ao = new Float32Array(n);
     for (let i = 0; i < n; i++) {
       const px = P[i * 3], py = P[i * 3 + 1], pz = P[i * 3 + 2], qx = N[i * 3], qy = N[i * 3 + 1], qz = N[i * 3 + 2];
@@ -74,5 +132,6 @@ self.onmessage = (e) => {
     }
     return ao;
   });
-  self.postMessage({ id, ao: out }, out.map((a) => a.buffer));
+  const transfer = [...aos.map((a) => a.buffer), ...geos.flatMap((g) => (g ? g.map((a) => a.array.buffer) : []))];
+  self.postMessage({ id, geos, aos }, transfer);
 };
