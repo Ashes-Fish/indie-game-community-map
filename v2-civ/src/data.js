@@ -1,7 +1,7 @@
 import raw from '../../site/data/communities.json';
 
 import { BUILTIN_STYLES } from './models.js';
-import { resolveCity, cityId } from './cn.js';
+import { resolveCity, cityId, findCity } from './cn.js';
 import { patchOfLonLat } from './patches.js';
 
 // Every city in the country that hosts a community. color = territory (civ) colour, color2 = secondary trim.
@@ -18,12 +18,12 @@ const YRD_CITIES = [
 const PALETTE = [['#8e5ad6', '#f3d27a'], ['#e8862e', '#1d2a48'], ['#1fb39a', '#f4f1e4'], ['#3a78c8', '#f2d27a'],
   ['#c2457a', '#f6e7c8'], ['#2e9e5b', '#f3d27a'], ['#c9a227', '#1d2a48'], ['#d43f3a', '#f6d36b']];
 function nationalCities() {
-  const out = new Map(YRD_CITIES.map((c) => [c.id, c]));
+  const out = new Map(YRD_CITIES.map((c) => [c.id, { ...c, province: findCity(c.name)?.p }]));
   for (const r of raw) {
     const res = resolveCity(r);
     if (!res) continue;
     const c = res.city, id = cityId(c);
-    if (!out.has(id)) out.set(id, { id, name: c.s, lon: c.lon, lat: c.lat, big: c.big, county: !!c.county });
+    if (!out.has(id)) out.set(id, { id, name: c.s, lon: c.lon, lat: c.lat, big: c.big, county: !!c.county, province: c.p });
   }
   let k = 0;
   return [...out.values()]

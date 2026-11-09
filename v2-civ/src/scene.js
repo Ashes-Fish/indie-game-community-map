@@ -557,31 +557,31 @@ function selectSite(s, fly) {
 function focusCity(city) {
   cam.flyTo(city.x, city.z + 4, 70, 1.4, 0);
 }
-// a 城市群 banner: frame all of its cities (a region without any yet: its anchor at region height)
-const REGION_D = 1100;   // above this distance the country view shows 城市群 banners; below it, city banners
+// a 大区 banner: frame all of its cities (a region without any yet: its anchor at region height).
+// Region frames sit around 700–1800 km; city banners take over below REGION_D, so a region view already shows them.
+const REGION_D = 2400;
 function goRegion(r) {
   if (ui) ui.closePanel();
   const v = regionView(r, portrait);
   cam.flyTo(v.x, v.z, v.d, 1.9);
 }
-// which 城市群 the camera is looking at (for the breadcrumb): the one whose cities are nearest the target
+// which 大区 the camera is looking at (for the breadcrumb): the one whose cities (or anchor) are nearest the target
 function regionUnderCamera() {
   let best = null, bestD = Infinity;
   for (const r of REGIONS) {
     const pts = r.cities.length ? r.cities : [{ x: r.ax, z: r.az }];
     for (const c of pts) { const d = Math.hypot(c.x - cam.target.x, c.z - cam.target.z); if (d < bestD) { bestD = d; best = r; } }
   }
-  return bestD < 600 ? best : null;
+  return bestD < 900 ? best : null;
 }
 function cityUnderCamera() {
   let best = null, bestD = 90;
   for (const c of CITIES) { const d = Math.hypot(c.x - cam.target.x, c.z - cam.target.z); if (d < bestD) { bestD = d; best = c; } }
   return best;
 }
-function updateCrumb() {
+function updateCrumb(r) {
   const parts = [{ name: '全国', go: goChina }];
   if (cam.dist < REGION_D) {
-    const r = regionUnderCamera();
     if (r) parts.push({ name: r.name, go: () => goRegion(r) });
     if (cam.dist < 260) { const c = cityUnderCamera(); if (c) parts.push({ name: c.name, go: () => focusCity(c) }); }
   }
@@ -703,8 +703,9 @@ function frame() {
   }
   dust.update(dt); beams.update(dt);
   dust.mat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() * 0.9;
-  ui.update(camera, cam.dist, (c) => built.has(c.key));
-  updateCrumb();
+  const curRegion = cam.dist < REGION_D ? regionUnderCamera() : null;
+  ui.update(camera, cam.dist, (c) => built.has(c.key), curRegion);
+  updateCrumb(curRegion);
   paper.update(camera, renderer.domElement.height);
   if (post) { post.update(cam.dist); post.render(); } else renderer.render(scene, camera);
   paper.step();   // draw one missing paper tile per frame

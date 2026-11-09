@@ -62,7 +62,7 @@ export class UI {
       this.root.appendChild(el);
       return { el, c, s, pos: new THREE.Vector3(s.x, s.y + 4.4, s.z), shown: false };
     });
-    // country-scale banners: one per 城市群 (regions.js); regions without a community yet show as reserved
+    // country-scale banners: one per 地理大区 (regions.js); regions without a community yet show as reserved seals
     this.count = Object.fromEntries(cities.map((c) => [c.id, communities.filter((m) => m.cityId === c.id).length]));
     this.hubs = this.regions.map((r) => {
       const n = r.cities.reduce((s, c) => s + (this.count[c.id] || 0), 0);
@@ -116,14 +116,17 @@ export class UI {
     return { x: (v.x * 0.5 + 0.5) * w, y: (-v.y * 0.5 + 0.5) * hh, ok: v.z < 1 && v.x > -1.3 && v.x < 1.3 && v.y > -1.3 && v.y < 1.3 };
   }
 
-  update(cam, dist, buildState) {
+  // region: the 大区 under the camera (scene.js); at region height only its cities carry banners
+  update(cam, dist, buildState, region = null) {
     const w = innerWidth, hh = innerHeight;
     this.updateHubs(cam, dist, w, hh);
+    const cityLevel = dist < 650;
     const sc = THREE.MathUtils.clamp(1.25 - dist / 520, 0.86, 1.12) * (this.mobile ? 0.92 : 1);
     for (const b of this.banners) {
       b.pos.y = b.city.y + (b.city.top || 5.2);   // the skyline is built after the UI (scene.js buildPatch)
       const p = this.project(b.pos, cam, w, hh);
-      b.el.style.display = p.ok && dist < this.regionD ? '' : 'none';   // country view: the region banners stand in
+      const inRegion = cityLevel || (region && b.city.region === region.id);
+      b.el.style.display = p.ok && dist < this.regionD && inRegion ? '' : 'none';   // country view: the region banners stand in
       if (p.ok) b.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-100%) scale(${sc})`;
     }
     const showTags = dist < 150;
@@ -145,7 +148,7 @@ export class UI {
     }
   }
 
-  // 城市群 banners at country scale; reserved ones fade in a little later (they are context, not destinations)
+  // 大区 banners at country scale; reserved ones are seals that keep clear of the real banners
   updateHubs(cam, dist, w, hh) {
     const on = dist >= this.regionD;
     const sc = this.mobile ? 0.82 : 0.95;
@@ -158,7 +161,7 @@ export class UI {
     }
     for (const hub of this.hubs) {
       if (hub.n) continue;
-      const p = on && dist > this.regionD * 1.5 ? this.project(hub.pos, cam, w, hh) : { ok: false };
+      const p = on ? this.project(hub.pos, cam, w, hh) : { ok: false };
       let vis = p.ok;
       if (vis) for (const t of taken) if (Math.abs(p.x - t.x) < t.hw + 50 && Math.abs(p.y - t.y) < t.hh + 14) { vis = false; break; }
       hub.el.style.display = vis ? '' : 'none';
@@ -166,7 +169,7 @@ export class UI {
     }
   }
 
-  // breadcrumb: 全国 › 城市群 › 城市, each step clickable
+  // breadcrumb: 全国 › 大区 › 城市, each step clickable
   setCrumb(parts) {
     const key = parts.map((p) => p.name).join('›');
     if (key === this.crumbKey) return;
