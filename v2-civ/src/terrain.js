@@ -67,8 +67,10 @@ uniform vec2 uHiHex;
 uniform float uHi;
 uniform float uGrid;
 uniform sampler2D uNat;
-uniform vec4 uNatRect;
+uniform vec4 uNatRect;     // the rect (x0, z0, x1, z1) uNat covers: a paper tile, a patch crop or the whole map
+uniform vec4 uNatBounds;   // the drawn national map; plain paper beyond it
 uniform float uNatOn;
+uniform float uIsPaper;    // 1 on the national paper tiles (paper.js), 0 on land patches
 uniform vec3 uPaperMul;
 varying vec3 vWP;
 varying float vLift;
@@ -367,6 +369,11 @@ const FRAG_MAIN = /* glsl */`
 
   // ---- fog of war: paper map ----
   vec3 pap = C_PAPER;
+  // how far inside the patch (0 at its edge, 1 beyond ~70 km in); at country scale the whole patch defers to the map
+  float deP = min(min(p.x - WXMIN, WXMIN + WXSPAN - p.x), min(p.y - WZMIN, WZMIN + WZSPAN - p.y));
+  float inR = smoothstep(10.0, 70.0, deP + (fbm3(p * 0.015) - 0.5) * 50.0) * (1.0 - smoothstep(850.0, 1100.0, uCamDist));
+  // pure national paper on a patch: let the paper tile underneath show, so patch and map never disagree
+  if (uIsPaper < 0.5 && uNatOn > 0.5 && inR < 0.001 && rev < 0.001 && fv < 0.18) discard;
   if (rev < 0.999) {
   pap *= 0.9 + 0.13 * fbm3(p * 0.03 + 7.0);
   pap = mix(pap, pap * vec3(0.93, 0.85, 0.7), smoothstep(0.58, 0.85, fbm3(p * 0.018 + 3.0)) * 0.7);
@@ -388,14 +395,12 @@ const FRAG_MAIN = /* glsl */`
   vec4 ink = texture2D(uInk, uvH);
   pap = mix(pap, ink.rgb, ink.a);
   pap *= uPaperMul;
-  // M0: the national ink map is the paper beyond (and fading into) this region
+  // the national ink map is the paper beyond (and fading into) this patch
   if (uNatOn > 0.5) {
     vec2 nuv = (p - uNatRect.xy) / (uNatRect.zw - uNatRect.xy);
-    vec2 ne = min(nuv, 1.0 - nuv) * (uNatRect.zw - uNatRect.xy);   // km inside the drawn map; plain paper beyond
+    vec2 ne = min(p - uNatBounds.xy, uNatBounds.zw - p);   // km inside the drawn map; plain paper beyond
     vec3 nat = mix(C_PAPER * uPaperMul * 0.97, texture2D(uNat, clamp(nuv, 0.0, 1.0)).rgb, smoothstep(0.0, 120.0, min(ne.x, ne.y)));
     nat *= 0.95 + 0.08 * fbm3(p * 0.012 + 7.0) + 0.03 * (vnoise(p * 1.7) - 0.5) * detail;
-    float de = min(min(p.x - WXMIN, WXMIN + WXSPAN - p.x), min(p.y - WZMIN, WZMIN + WZSPAN - p.y));
-    float inR = smoothstep(10.0, 70.0, de + (fbm3(p * 0.015) - 0.5) * 50.0);
     pap = mix(nat, pap, inR);
   }
   float burn = smoothstep(0.18, 0.475, fv) * (1.0 - rev);
@@ -452,53 +457,102 @@ export function makeTerrainDepthMaterial(shared) {
   return m;
 }
 
-// One land patch's terrain at the given grid step (km); shared = the patch's uniforms (World.shared)
-export function buildTerrainMesh(world, shared, step, mobile, material) {
-  const { x0, z0, x1, z1 } = world;
-  const nx = Math.round((x1 - x0) / step) + 1, nz = Math.round((z1 - z0) / step) + 1;
+// A height grid over [x0, x1] × [z0, z1] at about `step` km, with an optional skirt hanging `skirt` km below its edges
+// (hides cracks where it meets a neighbour of another detail level).
+function gridGeometry(world, x0, z0, x1, z1, step, skirt = 0) {
+  const nx = Math.max(2, Math.round((x1 - x0) / step) + 1), nz = Math.max(2, Math.round((z1 - z0) / step) + 1);
   const sx = (x1 - x0) / (nx - 1), sz = (z1 - z0) / (nz - 1);
-  const pos = new Float32Array(nx * nz * 3);
+  const ring = skirt ? 2 * (nx + nz) - 4 : 0;
+  const pos = new Float32Array((nx * nz + ring) * 3);
   for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
     const x = x0 + i * sx, z = z0 + j * sz, k = (j * nx + i) * 3;
     pos[k] = x; pos[k + 1] = world.heightY(x, z); pos[k + 2] = z;
   }
-  const idx = new Uint32Array((nx - 1) * (nz - 1) * 6);
-  let t = 0;
+  const idx = [];
   for (let j = 0; j < nz - 1; j++) for (let i = 0; i < nx - 1; i++) {
-    const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
-    idx[t++] = a; idx[t++] = c; idx[t++] = b; idx[t++] = b; idx[t++] = c; idx[t++] = d;
+    const p = j * nx + i, q = p + 1, c = p + nx, d = c + 1;
+    idx.push(p, c, q, q, c, d);
+  }
+  if (skirt) {
+    // edge loop (clockwise seen from above), each vertex copied straight down
+    const loop = [];
+    for (let i = 0; i < nx; i++) loop.push(i);
+    for (let j = 1; j < nz; j++) loop.push(j * nx + nx - 1);
+    for (let i = nx - 2; i >= 0; i--) loop.push((nz - 1) * nx + i);
+    for (let j = nz - 2; j > 0; j--) loop.push(j * nx);
+    const base = nx * nz;
+    loop.forEach((v, n) => { const k = (base + n) * 3; pos[k] = pos[v * 3]; pos[k + 1] = pos[v * 3 + 1] - skirt; pos[k + 2] = pos[v * 3 + 2]; });
+    for (let n = 0; n < loop.length; n++) {
+      const a0 = loop[n], a1 = loop[(n + 1) % loop.length], b0 = base + n, b1 = base + (n + 1) % loop.length;
+      idx.push(a0, a1, b0, a1, b1, b0, a0, b0, a1, a1, b0, b1);   // both windings: the side faces outward either way
+    }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  g.setIndex(new THREE.BufferAttribute(pos.length / 3 > 65535 ? new Uint32Array(idx) : new Uint16Array(idx), 1));
   g.computeVertexNormals();
   g.computeBoundingSphere();
-  const mat = material || makeTerrainMaterial(shared, mobile);
-  const mesh = new THREE.Mesh(g, mat);
-  mesh.receiveShadow = true; mesh.castShadow = true;
-  mesh.customDepthMaterial = makeTerrainDepthMaterial(shared);
-  return { mesh, material: mat };
+  return g;
 }
 
-// The national paper map everywhere outside the land patches: one flat sheet over rect [x0, z0, x1, z1] with a hole per
-// patch. It runs the terrain shader with an empty patch (nothing revealed, no patch rect), so it is exactly the
-// paper the patches fade into at their edges.
-export function buildPaperPlane(rect, holes, shared, mobile) {
-  const [x0, z0, x1, z1] = rect;
-  const outer = new THREE.Shape();   // shape y is world −z (rotated onto the ground below)
-  outer.moveTo(x0, -z1); outer.lineTo(x1, -z1); outer.lineTo(x1, -z0); outer.lineTo(x0, -z0); outer.lineTo(x0, -z1);
-  for (const w of holes) {
-    const h = new THREE.Path(), e = 0.5;
-    h.moveTo(w.x0 + e, -(w.z0 + e)); h.lineTo(w.x0 + e, -(w.z1 - e)); h.lineTo(w.x1 - e, -(w.z1 - e)); h.lineTo(w.x1 - e, -(w.z0 + e)); h.lineTo(w.x0 + e, -(w.z0 + e));
-    outer.holes.push(h);
+// A land patch's terrain in 128 km chunks, each drawn at one of three grid steps by its distance from the camera, plus
+// one coarse whole-patch mesh for country-scale views. Finer chunks are built on demand, a few per frame
+// (update's budget); until then a chunk shows the nearest level it has. The coarsest level casts no shadows.
+export const CHUNK_KM = 128;
+export class PatchTerrain {
+  constructor(world, shared, mobile) {
+    this.world = world;
+    this.material = makeTerrainMaterial(shared, mobile);
+    this.depth = makeTerrainDepthMaterial(shared);
+    this.steps = mobile ? [1.5, 3, 6] : [1, 2, 4];
+    this.near = [170, 520];     // camera distance (km) below which a chunk uses level 0 / level 1
+    this.group = new THREE.Group();
+    this.whole = this.mesh(gridGeometry(world, world.x0, world.z0, world.x1, world.z1, mobile ? 8 : 6));
+    this.whole.castShadow = false;
+    this.group.add(this.whole);
+    this.chunks = [];
+    for (let z = world.z0; z < world.z1 - 1e-6; z += CHUNK_KM) for (let x = world.x0; x < world.x1 - 1e-6; x += CHUNK_KM) {
+      const c = { x0: x, z0: z, x1: Math.min(world.x1, x + CHUNK_KM), z1: Math.min(world.z1, z + CHUNK_KM), lv: [null, null, null], shown: -1 };
+      c.lv[2] = this.buildLevel(c, 2);
+      this.chunks.push(c);
+    }
+    this.far = null;
   }
-  const g = new THREE.ShapeGeometry(outer);
-  g.rotateX(-Math.PI / 2);
-  const ps = { uniforms: { ...shared.uniforms,
-    uHex: { value: null }, uWater: { value: null }, uNormalTex: { value: null }, uInk: { value: null }, uRevealB: { value: 0 },
-    uRect: { value: new THREE.Vector4(1e5, 1e5, 1, 1) }, uHexGrid: { value: new THREE.Vector4(0, 0, 0, 0) } } };
-  const mesh = new THREE.Mesh(g, makeTerrainMaterial(ps, mobile));
-  mesh.position.y = 0.03;
-  mesh.receiveShadow = true;
-  return mesh;
+  mesh(g) {
+    const m = new THREE.Mesh(g, this.material);
+    m.receiveShadow = true; m.customDepthMaterial = this.depth;
+    return m;
+  }
+  buildLevel(c, l) {
+    const m = this.mesh(gridGeometry(this.world, c.x0, c.z0, c.x1, c.z1, this.steps[l], 0.6));
+    m.castShadow = l <= 1; m.visible = false;
+    this.group.add(m);
+    return m;
+  }
+  // far: country scale (whole-patch mesh only). Returns how many chunk levels it built.
+  update(cam, far, budget) {
+    if (far !== this.far) {
+      this.far = far;
+      this.whole.visible = far;
+      if (far) for (const c of this.chunks) { if (c.shown >= 0) c.lv[c.shown].visible = false; c.shown = -1; }
+    }
+    if (far) return 0;
+    let built = 0;
+    const p = cam.position;
+    for (const c of this.chunks) {
+      const dx = Math.max(c.x0 - p.x, 0, p.x - c.x1), dz = Math.max(c.z0 - p.z, 0, p.z - c.z1);
+      const d = Math.hypot(dx, dz, p.y);
+      // a little hysteresis so a chunk on a threshold doesn't flip every frame
+      const sl = c.shown, k = (t, lv) => (sl >= 0 && sl <= lv ? t * 1.08 : t);
+      let want = d < k(this.near[0], 0) ? 0 : d < k(this.near[1], 1) ? 1 : 2;
+      if (!c.lv[want] && built < budget) { c.lv[want] = this.buildLevel(c, want); built++; }
+      if (!c.lv[want]) want = [want, want + 1, want - 1, 2, 1, 0].find((l) => l >= 0 && l <= 2 && c.lv[l]);
+      if (want !== c.shown) {
+        if (c.shown >= 0) c.lv[c.shown].visible = false;
+        c.lv[want].visible = true; c.shown = want;
+      }
+    }
+    return built;
+  }
+  dispose() { this.group.traverse((o) => o.geometry && o.geometry.dispose()); }
 }

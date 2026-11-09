@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import './style.css';
 import { World, loadImage } from './world.js';
 import { CITIES, COMMUNITIES, HUB_CITIES } from './data.js';
-import { buildTerrainMesh, buildPaperPlane, loadTerrainTextures, makeRippleTexture, MAX_OWNERS } from './terrain.js';
+import { PatchTerrain, loadTerrainTextures, makeRippleTexture, MAX_OWNERS } from './terrain.js';
 import { buildInkTexture } from './parchment.js';
 import { CivCamera } from './camera.js';
 import { buildProps } from './props.js';
@@ -17,7 +17,8 @@ import { HEX_R, toWorld } from './config.js';
 import { PATCHES, patchById } from './patches.js';
 import { dumpPins } from './layout.js';
 import PINS from './layout-pins.json';
-import { buildNationalInk, paperMul, PAPER_STYLES } from './natink.js';
+import { createPainter, paperMul, PAPER_STYLES } from './natink.js';
+import { PaperTiles } from './paper.js';
 
 // One national world (docs/全国一张世界方案.md): the national ink map is the fog-of-war paper, each land patch (地块)
 // rises out of it in 3D, one camera from the whole country down to a street. 长三角 keeps its hand-made extras
@@ -30,10 +31,9 @@ document.querySelector('#loader .sub').textContent = '全国';
 const coarse = matchMedia('(pointer: coarse)').matches;
 const mobile = qs.get('q') === 'low' || (qs.get('q') !== 'high' && (coarse || innerWidth < 720) && Math.min(innerWidth, innerHeight) < 900);
 const Q = mobile
-  ? { mobile: true, dpr: Math.min(devicePixelRatio, 2), post: false, shadow: 1024, step: 1.5, inkPerKm: 2.4, trees: 0.5, nat: 2048 }
-  : { mobile: false, dpr: Math.min(devicePixelRatio, 1.5), post: true, shadow: 2048, step: 1.0, inkPerKm: 3.4, trees: 1, nat: 4096 };
-const FAR_D = 1100;        // beyond this camera distance a patch shows only its coarse terrain (stand-in for M2 LOD)
-const COARSE_STEP = 4;     // km grid of that coarse terrain
+  ? { mobile: true, dpr: Math.min(devicePixelRatio, 2), post: false, shadow: 1024, inkPerKm: 2.4, trees: 0.5, paperPerKm: 1.1 }
+  : { mobile: false, dpr: Math.min(devicePixelRatio, 1.5), post: true, shadow: 2048, inkPerKm: 3.4, trees: 1, paperPerKm: 2.2 };
+const FAR_D = 1100;        // country scale beyond this camera distance: paper, whole-patch terrain, national banners
 
 const loadbar = document.getElementById('loadbar');
 const loadtip = document.getElementById('loadtip');
@@ -95,7 +95,8 @@ const shared = {
     uOwnCol: { value: Array.from({ length: MAX_OWNERS }, () => new THREE.Color(0, 0, 0)) },
     uOwnCol2: { value: Array.from({ length: MAX_OWNERS }, () => new THREE.Color(1, 1, 1)) },
     uHiHex: { value: new THREE.Vector2(999, 999) }, uHi: { value: 0 },
-    uNat: { value: null }, uNatRect: { value: new THREE.Vector4(0, 0, 1, 1) }, uNatOn: { value: 1 }, uPaperMul: { value: paperMul(PAPER) },
+    uNat: { value: null }, uNatRect: { value: new THREE.Vector4(0, 0, 1, 1) }, uNatBounds: { value: new THREE.Vector4(0, 0, 1, 1) },
+    uNatOn: { value: 1 }, uIsPaper: { value: 0 }, uPaperMul: { value: paperMul(PAPER) },
   },
 };
 const REVEAL_FINAL = 80 * 1.5;
@@ -132,10 +133,10 @@ const cam = new CivCamera(camera, canvas, {
   maxD: NAT_VIEW.d * 1.12, minD: mobile ? 26 : 30, pitchD: 510, farPitch: 80, fixedBounds: true,
   bounds: { x0: NAT_VIEW.x - 2300, x1: NAT_VIEW.x + 2300, z0: NAT_VIEW.z - 1700, z1: NAT_VIEW.z + 1500 },
 });
-const patches = [];           // { world, P, cities, comms, sites, rivers, ps, coarse, fine, near, ready, t, ... }
+const patches = [];           // { world, P, cities, comms, sites, rivers, ps, terrain, mid, near, revealT, buildT, ... }
 const proxies = [];
 const built = new Set();      // communities whose district has been raised (UI tags follow it)
-let ui, post, dust, beams, hovered = null, farOn = null;
+let ui, post, dust, beams, paper, painter, hovered = null, farOn = null;
 
 async function loadLogos() {
   const out = {};
@@ -164,15 +165,20 @@ async function init() {
   const worlds = PATCHES.map((P) => new World(P));
   const riversP = worlds.map((w) => fetch(`${BASE}data/patches/${w.id}/rivers.json`).then((r) => r.json()));
   const [nat, lg, terrTex] = await Promise.all([
-    buildNationalInk(BASE, PAPER, Q.nat, HUB_CITIES), loadLogos(), loadTerrainTextures(BASE + 'tex/terrain.webp'), ...worlds.map((w) => w.load(BASE)),
+    createPainter(BASE, PAPER, HUB_CITIES), loadLogos(), loadTerrainTextures(BASE + 'tex/terrain.webp'), ...worlds.map((w) => w.load(BASE)),
   ]);
   logos = lg;
   shared.uniforms.uTerr.value = terrTex;
   shared.uniforms.uRipple.value = makeRippleTexture();
-  shared.uniforms.uNat.value = nat.tex; shared.uniforms.uNatRect.value.copy(nat.rect);
+  shared.uniforms.uNatBounds.value.set(...nat.rect);
+  painter = nat;
+  paper = new PaperTiles(nat, shared, Q.mobile);
+  await paper.init();
+  scene.add(paper.group);
+  shared.uniforms.uNat.value = paper.root.tex; shared.uniforms.uNatRect.value.copy(paper.root.rect);
   CITIES.forEach((c) => { shared.uniforms.uOwnCol.value[c.gi + 1].set(c.color).convertSRGBToLinear(); shared.uniforms.uOwnCol2.value[c.gi + 1].set(c.color2).convertSRGBToLinear(); });
 
-  // phase 1, every patch: hex layout (cities, territory, districts), levelled sites, coarse terrain
+  // phase 1, every patch: hex layout (cities, territory, districts), levelled sites, chunked terrain (coarse levels)
   progress(0.5, '正在勘定疆界…');
   for (const [i, world] of worlds.entries()) {
     const cities = CITIES.filter((c) => c.patch === world.id);
@@ -184,21 +190,22 @@ async function init() {
     for (const c of cities) c.y = world.heightY(c.x, c.z);
     for (const s of world.sites) { s.y = world.heightY(s.x, s.z); for (const c of s.members) c.y = s.y; }
     world.uniforms.uInk.value = NO_INK;
+    // the national paper this patch fades into at its edges: the coarsest tile until its own crop is drawn (buildMid)
+    world.uniforms.uNat = { value: paper.root.tex }; world.uniforms.uNatRect = { value: paper.root.rect.clone() };
     const ps = world.shared(shared);
-    const coarseT = buildTerrainMesh(world, ps, COARSE_STEP, Q.mobile);
-    scene.add(coarseT.mesh);
-    patches.push({ world, P: world.patch, cities, comms, sites: world.sites, rivers: await riversP[i], ps, coarse: coarseT.mesh, material: coarseT.material, ready: false, t: 0 });
+    const terrain = new PatchTerrain(world, ps, Q.mobile);
+    scene.add(terrain.group);
+    patches.push({ world, P: world.patch, cities, comms, sites: world.sites, rivers: await riversP[i], ps, terrain, mid: null, near: null, revealT: -0.25 * i, buildT: 0 });
     progress(0.5 + 0.3 * (i + 1) / worlds.length);
     await tick();
   }
-  const [rx0, rz0, rx1, rz1] = nat.rect.toArray();
-  scene.add(buildPaperPlane([rx0 - 6000, rz0 - 6000, rx1 + 6000, rz1 + 6000], PATCHES, shared, Q.mobile));
   dust = new Dust(); beams = new Beams();
   scene.add(dust.points, beams.group);
 
   ui = new UI({
     cities: CITIES, communities: COMMUNITIES, sites: patches.flatMap((pa) => pa.sites), base: BASE, mobile, regionName: '全国', onChina: goChina,
     onPick: (c, fly) => select(c, fly), onSite: (s, fly) => selectSite(s, fly), onCity: (city) => focusCity(city), onReplay: replay,
+    onHub: flyToHub, patchName: (id) => patchById(id)?.name,
   });
   ui.onClose = () => { selected = null; };
   if (patchById('yrd')) {
@@ -220,38 +227,56 @@ async function init() {
   }
   progress(0.95, '即将完成…');
   // window.__dbg.pins() prints the snapshot to commit as src/layout-pins.json after adding communities
-  window.__dbg = { scene, cam, shared, renderer, camera, patches, COMMUNITIES, CITIES, select, focusCity, perf, NAT_VIEW, pins: () => JSON.stringify(dumpPins(CITIES, COMMUNITIES), null, 2), get post() { return post; } };
+  window.__dbg = { scene, cam, shared, paper, frame, renderer, camera, patches, COMMUNITIES, CITIES, select, focusCity, perf, NAT_VIEW, pins: () => JSON.stringify(dumpPins(CITIES, COMMUNITIES), null, 2), get post() { return post; } };
   start();
-  buildPatches();
+  scheduler();
 }
 
-// phase 2: raise each patch in 3D, the one nearest the camera first; it then grows out of the paper
-async function buildPatches() {
-  const todo = [...patches];
-  while (todo.length) {
-    const t = cam.fly ? cam.fly.to : cam.target;
-    todo.sort((a, b) => Math.hypot(a.P.cx - t.x, a.P.cz - t.z) - Math.hypot(b.P.cx - t.x, b.P.cz - t.z));
-    await buildPatch(todo.shift());
+// ---------- detail levels (M2) ----------
+// Every patch always has its chunked terrain. Its "mid" tier (ink map, cities, districts, roads, rivers, wonders) is built
+// once the camera is below country scale within MID_KM of it; its "near" tier (trees, villages, smoke, walkers, birds,
+// boats) once the camera is lower than NEAR_D close to it. One build at a time, nearest patch first.
+const MID_KM = 700, NEAR_D = 650, NEAR_KM = 350;
+const rectDist = (P, x, z) => Math.hypot(Math.max(P.x0 - x, 0, x - P.x1), Math.max(P.z0 - z, 0, z - P.z1));
+function nextBuild() {
+  const t = cam.fly ? cam.fly.to : cam.target, d = cam.fly ? cam.fly.to.d : cam.goalDist;
+  if (d > FAR_D) return null;
+  let best = null, bd = Infinity;
+  for (const pa of patches) {
+    const r = rectDist(pa.P, t.x, t.z);
+    if (!pa.mid && r < MID_KM && r < bd) { best = [pa, 'mid']; bd = r; }
+    else if (pa.mid && !pa.near && d < NEAR_D && r < NEAR_KM && r - 1000 < bd) { best = [pa, 'near']; bd = r - 1000; }
+  }
+  return best;
+}
+async function scheduler() {
+  for (;;) {
+    const job = nextBuild();
+    if (!job) { await new Promise((r) => setTimeout(r, 150)); continue; }
+    const [pa, tier] = job;
+    if (tier === 'mid') await buildMid(pa); else buildNear(pa);
+    farOn = null;   // re-apply visibility for the new objects
     await tick();
   }
-  window.__allBuiltAt = performance.now();
 }
 
-async function buildPatch(pa) {
+async function buildMid(pa) {
   const { world, ps, cities, comms, sites, rivers } = pa;
   const yrd = world.id === 'yrd';
   const inkSize = Math.min(2048, Math.round((world.x1 - world.x0) * Q.inkPerKm));
   world.uniforms.uInk.value = buildInkTexture(world, rivers.rivers, inkSize, CITIES.map((c) => c.name), PAPER_STYLES[PAPER].mtn);
-  pa.fine = buildTerrainMesh(world, ps, Q.step, Q.mobile, pa.material).mesh;
   await tick();
-  const g = pa.near = new THREE.Group();
+  // a sharp crop of the national paper for the patch's edges (about the resolution of the paper tiles around it)
+  const r = [world.x0, world.z0, world.x1, world.z1], cap = Q.mobile ? 1024 : 2048, k = Math.min(Q.paperPerKm, cap / Math.max(r[2] - r[0], r[3] - r[1]));
+  world.uniforms.uNat.value = await painter.paint(r, Math.round((r[2] - r[0]) * k), Math.round((r[3] - r[1]) * k));
+  world.uniforms.uNatRect.value.set(...r);
+  await tick();
+  const g = new THREE.Group();
   const [hx, hz] = toWorld(118.17, 30.13); // 黄山
-  const keepOut = [...cities.map((c) => ({ x: c.x, z: c.z, r: 5.4 })), ...sites.map((s) => ({ x: s.x, z: s.z, r: 4.3 })), ...(yrd ? [{ x: hx, z: hz, r: 7 }] : [])];
-  pa.props = buildProps(world, ps, Q, keepOut);
   const cityGroup = buildCities(world, cities, ps).group;
   const distGroup = buildDistricts(world, sites, cities, ps, logos, BASE);
   const westLake = yrd ? buildWestLake(world, rivers) : new THREE.Group();
-  g.add(pa.props.group, cityGroup, distGroup, westLake);
+  g.add(cityGroup, distGroup, westLake);
   // baked vertex AO (worker, async — buildings pop in darker a moment later) + lantern flicker
   if (qs.get('ao') !== '0') {
     const strength = Q.post ? 0.5 : 0.75;   // desktop also has screen-space AO up close
@@ -261,70 +286,91 @@ async function buildPatch(pa) {
   }
   for (const gg of [cityGroup, distGroup, westLake]) livenBuildings(gg, ps);
   g.add(buildRivers(world, rivers.rivers, ps));
-  const roads = buildRoads(world, cities, ps);
-  g.add(roads);
-  // life: chimney smoke over villages and city lanes, walkers and ox carts on the roads, birds over lakes and towns
-  const R = (k) => ((Math.sin(k * 91.7) * 43758.5) % 1 + 1) % 1;
-  const emit = pa.props.houses.filter((h, i) => R(i) < (Q.mobile ? 0.12 : 0.22)).map((h, i) => ({ x: h.x + 0.2 * h.s, y: h.y + 0.62 * h.s * (h.sy || 1), z: h.z, ph: R(i + 0.5) }));
-  for (const c of cities) for (let k = 0; k < 3; k++) emit.push({ x: c.x + (R(k + c.x) - 0.5) * 4, y: c.y + 0.6, z: c.z + (R(k * 3 + c.z) - 0.5) * 4, ph: R(k + 7) });
-  pa.smoke = buildSmoke(emit, ps, Q);
-  pa.walkers = buildWalkers(world, roads.userData.paths, Q);
+  pa.roads = buildRoads(world, cities, ps);
+  g.add(pa.roads);
   const C = (id) => cities.find((c) => c.id === id);
-  const birdAt = yrd && C('shanghai') && C('nanjing')
-    ? [yrdOld(9, -12), toWorld(120.14, 30.24), [C('shanghai').x, C('shanghai').z], yrdOld(-20, -60), [C('nanjing').x, C('nanjing').z], yrdOld(60, 20)].map(([x, z]) => ({ x, z }))
-    : cities.map((c) => ({ x: c.x, z: c.z }));
-  pa.birds = buildBirds(world, birdAt, ps, Q);
-  g.add(pa.smoke.points, pa.walkers.group, pa.birds.mesh);
   const lud = comms.find((c) => c.key === 'ludere');
   pa.trade = lud && C('changshu') ? buildTrade(world, lud, C('changshu'), ps)
     : { group: new THREE.Group(), mat: { uniforms: { uA: { value: 0 } } }, update() {} };
-  const canal = rivers.rivers.find((r) => r.name === 'canal');
-  pa.boats = canal ? buildBoats(world, canal) : { group: new THREE.Group(), update() {} };
   pa.hs = yrd ? buildHuangshan(world, hx, hz, ps) : { group: new THREE.Group(), update() {} };
-  g.add(pa.trade.group, pa.boats.group, pa.hs.group);
+  g.add(pa.trade.group, pa.hs.group);
   // pick proxies
   const pmat = new THREE.MeshBasicMaterial({ visible: false });
   const pgeo = new THREE.CylinderGeometry(HEX_R * 0.92, HEX_R * 0.92, 9, 6).rotateY(Math.PI / 6);
   for (const s of sites) { const m = new THREE.Mesh(pgeo, pmat); m.position.set(s.x, s.y + 2, s.z); m.userData.site = s; proxies.push(m); g.add(m); }
   for (const c of cities) { const m = new THREE.Mesh(pgeo, pmat); m.position.set(c.x, c.y + 2, c.z); m.userData.city = c; proxies.push(m); g.add(m); }
-  scene.add(pa.fine, g);
-  farOn = null;   // re-apply far / near visibility for the new meshes
-  grow(pa);
-  pa.ready = true;
+  scene.add(g);
+  pa.mid = g;
+  growDistricts(pa);
 }
 
-// the patch's land grows out of the paper, then its districts rise one after another
-function grow(pa) {
-  pa.t = 0;
-  pa.world.uniforms.uRevealB.value = 0;
-  pa.comms.forEach((c, i) => { c.buildAt = T_REVEAL * 0.55 + i * 0.32; c.inner.scale.set(0.001, 0.001, 0.001); c.flag.scale.set(1, 0.001, 1); built.delete(c.key); });
+function buildNear(pa) {
+  const { world, ps, cities, sites, rivers } = pa;
+  const yrd = world.id === 'yrd';
+  const g = new THREE.Group();
+  const [hx, hz] = toWorld(118.17, 30.13); // 黄山
+  const keepOut = [...cities.map((c) => ({ x: c.x, z: c.z, r: 5.4 })), ...sites.map((s) => ({ x: s.x, z: s.z, r: 4.3 })), ...(yrd ? [{ x: hx, z: hz, r: 7 }] : [])];
+  pa.props = buildProps(world, ps, Q, keepOut);
+  // life: chimney smoke over villages and city lanes, walkers and ox carts on the roads, birds over lakes and towns
+  const R = (k) => ((Math.sin(k * 91.7) * 43758.5) % 1 + 1) % 1;
+  const emit = pa.props.houses.filter((h, i) => R(i) < (Q.mobile ? 0.12 : 0.22)).map((h, i) => ({ x: h.x + 0.2 * h.s, y: h.y + 0.62 * h.s * (h.sy || 1), z: h.z, ph: R(i + 0.5) }));
+  for (const c of cities) for (let k = 0; k < 3; k++) emit.push({ x: c.x + (R(k + c.x) - 0.5) * 4, y: c.y + 0.6, z: c.z + (R(k * 3 + c.z) - 0.5) * 4, ph: R(k + 7) });
+  pa.smoke = buildSmoke(emit, ps, Q);
+  pa.walkers = buildWalkers(world, pa.roads.userData.paths, Q);
+  const C = (id) => cities.find((c) => c.id === id);
+  const birdAt = yrd && C('shanghai') && C('nanjing')
+    ? [yrdOld(9, -12), toWorld(120.14, 30.24), [C('shanghai').x, C('shanghai').z], yrdOld(-20, -60), [C('nanjing').x, C('nanjing').z], yrdOld(60, 20)].map(([x, z]) => ({ x, z }))
+    : cities.map((c) => ({ x: c.x, z: c.z }));
+  pa.birds = buildBirds(world, birdAt, ps, Q);
+  const canal = rivers.rivers.find((r) => r.name === 'canal');
+  pa.boats = canal ? buildBoats(world, canal) : { group: new THREE.Group(), update() {} };
+  g.add(pa.props.group, pa.smoke.points, pa.walkers.group, pa.birds.mesh, pa.boats.group);
+  scene.add(g);
+  pa.near = g;
+}
+
+// districts rise one after another (when the patch's mid tier is built, and on 重播建城)
+function growDistricts(pa) {
+  pa.buildT = 0;
+  pa.comms.forEach((c, i) => { c.buildAt = 0.3 + i * 0.32; c.inner.scale.set(0.001, 0.001, 0.001); c.flag.scale.set(1, 0.001, 1); built.delete(c.key); });
   pa.trade.mat.uniforms.uA.value = 0;
 }
-function updatePatch(pa, dt) {
-  const t = pa.t += dt;
-  const u = Math.min(1, t / T_REVEAL);
+function updatePatch(pa, dt, far) {
+  // land grows out of the paper (all patches, from the start)
+  const u = Math.min(1, Math.max(0, (pa.revealT += dt) / T_REVEAL));
   pa.world.uniforms.uRevealB.value = (1 - Math.pow(1 - u, 2.4)) * REVEAL_FINAL;
-  pa.hs.group.scale.setScalar(Math.max(0.001, Math.min(1, (t - T_REVEAL * 0.6) / 0.8)));
-  for (const c of pa.comms) {
-    const t0 = c.buildAt;
-    if (t < t0) continue;
-    if (!built.has(c.key)) {
-      built.add(c.key);
-      if (!farOn) { const k = THREE.MathUtils.clamp(cam.dist / 110, 1, 4); dust.burst(c.x, c.y, c.z, mobile ? 40 : 70, 3.2 * Math.sqrt(k)); }
+  if (pa.mid && !far) {
+    const t = pa.buildT += dt;
+    pa.hs.group.scale.setScalar(Math.max(0.001, Math.min(1, (pa.revealT - T_REVEAL * 0.6) / 0.8)));
+    for (const c of pa.comms) {
+      const t0 = c.buildAt;
+      if (t < t0) continue;
+      if (!built.has(c.key)) {
+        built.add(c.key);
+        const k = THREE.MathUtils.clamp(cam.dist / 110, 1, 4);
+        dust.burst(c.x, c.y, c.z, mobile ? 40 : 70, 3.2 * Math.sqrt(k));
+      }
+      const p = Math.min(1, (t - t0) / T_GROW);
+      const sxz = 0.55 + 0.45 * Math.min(1, p * 1.6);
+      c.inner.scale.set(sxz, Math.max(0.001, easeOutBack(p, 2.4)), sxz);
+      const pf = Math.min(1, Math.max(0, (t - t0 - 0.5) / 0.7));
+      c.flag.scale.set(1, Math.max(0.001, easeOutBack(pf, 1.8)), 1);
     }
-    const p = Math.min(1, (t - t0) / T_GROW);
-    const sxz = 0.55 + 0.45 * Math.min(1, p * 1.6);
-    c.inner.scale.set(sxz, Math.max(0.001, easeOutBack(p, 2.4)), sxz);
-    const pf = Math.min(1, Math.max(0, (t - t0 - 0.5) / 0.7));
-    c.flag.scale.set(1, Math.max(0.001, easeOutBack(pf, 1.8)), 1);
+    const last = pa.comms.length ? pa.comms[pa.comms.length - 1].buildAt : 0;
+    pa.trade.mat.uniforms.uA.value = Math.min(1, Math.max(0, (t - last - 0.6) / 1.0));
+    pa.trade.update(dt); pa.hs.update(shared.uniforms.uTime.value);
   }
-  const last = pa.comms.length ? pa.comms[pa.comms.length - 1].buildAt : 0;
-  pa.trade.mat.uniforms.uA.value = Math.min(1, Math.max(0, (t - last - 0.6) / 1.0));
-  pa.props.setDist(cam.dist);
-  pa.trade.update(dt); pa.boats.update(dt); pa.hs.update(shared.uniforms.uTime.value);
-  pa.smoke.mat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() * 0.9;
-  pa.birds.update(shared.uniforms.uTime.value, cam.dist);
-  pa.walkers.update(dt, shared.uniforms.uTime.value, cam.dist);
+  if (pa.near) {
+    const show = !far && cam.dist < NEAR_D;
+    pa.near.visible = show;
+    if (show) {
+      pa.props.setDist(cam.dist);
+      pa.boats.update(dt);
+      pa.smoke.mat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() * 0.9;
+      pa.birds.update(shared.uniforms.uTime.value, cam.dist);
+      pa.walkers.update(dt, shared.uniforms.uTime.value, cam.dist);
+    }
+  }
 }
 
 // ---------- interaction ----------
@@ -356,6 +402,14 @@ function selectSite(s, fly) {
 function focusCity(city) {
   cam.flyTo(city.x, city.z + 4, 70, 1.4, 0);
 }
+// a national banner: one city → that city; several in one patch → the patch; otherwise frame them all
+function flyToHub(g) {
+  if (g.cities.length === 1) return focusCity(g.cities[0]);
+  const P = patchById(g.cities[0].patch);
+  if (P && g.cities.every((c) => c.patch === P.id)) { const ov = patchOverview(P); return cam.flyTo(ov.x, ov.z, ov.d, 1.8); }
+  const xs = g.cities.map((c) => c.x), zs = g.cities.map((c) => c.z);
+  cam.flyTo((Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2, Math.min(FAR_D * 0.95, Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) * 1.6 + 300), 1.8);
+}
 cam.onTap = (x, y) => {
   if (!ui) return;
   ui.list.classList.remove('open');
@@ -377,7 +431,7 @@ function goChina() { if (ui) ui.closePanel(); cam.flyTo(NAT_VIEW.x, NAT_VIEW.z, 
 // 重播建城: back to the country, every patch grows out of the paper again
 function replay() {
   goChina();
-  setTimeout(() => { for (const pa of patches) if (pa.ready) grow(pa); }, 1600);
+  setTimeout(() => { patches.forEach((pa, i) => { pa.revealT = -0.25 * i; if (pa.mid) growDistricts(pa); }); }, 1600);
 }
 
 let last = performance.now();
@@ -431,6 +485,8 @@ function frame() {
   const raw = (now - last) / 1000;
   const dt = Math.min(0.05, raw); last = now;
   adaptResolution(raw);
+  // a tab opened in the background can start at 0 × 0 and miss the resize event
+  if (renderer.domElement.width !== Math.floor(innerWidth * renderer.getPixelRatio()) && innerWidth > 0) onResize();
   const U = shared.uniforms;
   U.uTime.value += dt;
   cam.update(dt);
@@ -449,28 +505,32 @@ function frame() {
   // keep depth precision across a 30 → 8000 km zoom
   const near = Math.max(1, cam.dist / 150), far = Math.max(4000, cam.dist * 4);
   if (near !== camera.near || far !== camera.far) { camera.near = near; camera.far = far; camera.updateProjectionMatrix(); }
-  // country scale: only the paper and each patch's coarse terrain, shadow map frozen (stand-in for M2 LOD)
+  // country scale: only the paper, whole-patch terrain and national banners; shadow map frozen
   const isFar = cam.dist > FAR_D;
   if (isFar !== farOn) {
     farOn = isFar;
-    for (const pa of patches) {
-      pa.coarse.visible = isFar || !pa.ready;
-      if (pa.fine) { pa.fine.visible = !isFar; pa.near.visible = !isFar; }
-    }
+    for (const pa of patches) if (pa.mid) pa.mid.visible = !isFar;
     renderer.shadowMap.autoUpdate = !isFar; renderer.shadowMap.needsUpdate = true;
   }
-  for (const pa of patches) if (pa.ready) updatePatch(pa, dt);
+  let budget = 2;   // terrain chunk builds per frame
+  for (const pa of patches) {
+    budget -= pa.terrain.update(camera, isFar, budget);
+    updatePatch(pa, dt, isFar);
+  }
   dust.update(dt); beams.update(dt);
   dust.mat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() * 0.9;
   ui.update(camera, cam.dist, (c) => built.has(c.key));
+  paper.update(camera, renderer.domElement.height);
   if (post) { post.update(cam.dist); post.render(); } else renderer.render(scene, camera);
+  paper.step();   // draw one missing paper tile per frame
 }
 
-addEventListener('resize', () => {
+function onResize() {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   fitNational(); cam.maxD = NAT_VIEW.d * 1.12;
   renderer.setSize(innerWidth, innerHeight);
   if (post) post.setSize(innerWidth, innerHeight);
-});
+}
+addEventListener('resize', onResize);
 
 init().catch((e) => { console.error(e); loadtip.textContent = '加载失败：' + e.message; });

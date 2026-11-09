@@ -8,12 +8,12 @@ const BANNER_ICONS = 6; // the rest show as "+N"; the full list is in the 社团
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 export class UI {
-  constructor({ cities, communities, sites, base, regionName, onPick, onSite, onCity, onReplay, onChina, mobile }) {
+  constructor({ cities, communities, sites, base, regionName, onPick, onSite, onCity, onReplay, onChina, onHub, patchName, mobile }) {
     this.root = document.getElementById('ui');
     this.root.style.setProperty('--frame', FRAME);
     this.root.style.setProperty('--frame-s', FRAME_S);
     this.cities = cities; this.comms = communities; this.base = base; this.mobile = mobile;
-    this.onPick = onPick; this.onSite = onSite; this.onCity = onCity;
+    this.onPick = onPick; this.onSite = onSite; this.onCity = onCity; this.onHub = onHub; this.patchName = patchName || (() => null);
     const logoSrc = (c) => (c.logo ? `${base}logos/${c.logo}.webp` : null);
     this.logoSrc = logoSrc;
     const logo = (c) => (c.logo ? `<img src="${logoSrc(c)}" alt="">` : `<span class="ph">${esc(c.glyph)}</span>`);
@@ -59,6 +59,9 @@ export class UI {
       this.root.appendChild(el);
       return { el, c, s, pos: new THREE.Vector3(s.x, s.y + 4.4, s.z), shown: false };
     });
+    // country-scale banners: cities that crowd each other on screen merge into one (e.g. 长三角 · 7)
+    this.count = Object.fromEntries(cities.map((c) => [c.id, communities.filter((m) => m.cityId === c.id).length]));
+    this.hubs = [];
     this.labels = [];
     const perCity = {};
     for (const s of sites) perCity[s.cityId] = (perCity[s.cityId] || 0) + 1;
@@ -100,6 +103,7 @@ export class UI {
 
   update(cam, dist, buildState) {
     const w = innerWidth, hh = innerHeight;
+    this.updateHubs(cam, dist, w, hh);
     const sc = THREE.MathUtils.clamp(1.25 - dist / 520, 0.86, 1.12) * (this.mobile ? 0.92 : 1);
     for (const b of this.banners) {
       b.pos.y = b.city.y + (b.city.top || 5.2);   // the skyline is built after the UI (scene.js buildPatch)
@@ -124,6 +128,44 @@ export class UI {
       l.el.style.display = p.ok && fade * fadeFar > 0.02 ? '' : 'none';
       if (p.ok) { l.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-50%)`; l.el.style.opacity = fade * fadeFar; }
     }
+  }
+
+  updateHubs(cam, dist, w, hh) {
+    const on = dist >= 1100;
+    const groups = [];
+    if (on) {
+      const order = this.cities.filter((c) => this.count[c.id] && c.y != null).sort((a, b) => this.count[b.id] - this.count[a.id]);
+      for (const c of order) {
+        const p = this.project(this._v2 ? this._v2.set(c.x, c.y, c.z) : (this._v2 = new THREE.Vector3(c.x, c.y, c.z)), cam, w, hh);
+        if (!p.ok) continue;
+        const g = groups.find((q) => Math.hypot(q.x - p.x, q.y - p.y) < 70);
+        if (g) g.cities.push(c); else groups.push({ x: p.x, y: p.y, cities: [c] });
+      }
+    }
+    while (this.hubs.length < groups.length) {
+      const el = h('div', 'banner hub', '<div class="bar"><div class="pop"></div><div class="nm"></div></div>');
+      const hub = { el, g: null };
+      el.onclick = (e) => { e.stopPropagation(); if (hub.g) this.onHub(hub.g); };
+      this.root.appendChild(el);
+      this.hubs.push(hub);
+    }
+    this.hubs.forEach((hub, i) => {
+      const g = groups[i];
+      hub.el.style.display = g ? '' : 'none';
+      if (!g) return;
+      hub.g = g;
+      const lead = g.cities[0], n = g.cities.reduce((s, c) => s + this.count[c.id], 0);
+      const same = g.cities.every((c) => c.patch === lead.patch);
+      const name = g.cities.length === 1 ? lead.name : (same && this.patchName(lead.patch)) || `${lead.name}等`;
+      const key = name + n;
+      if (hub.key !== key) {
+        hub.key = key;
+        hub.el.querySelector('.pop').textContent = n;
+        hub.el.querySelector('.nm').textContent = name;
+        hub.el.style.setProperty('--c', lead.color);
+      }
+      hub.el.style.transform = `translate(${g.x}px,${g.y}px) translate(-50%,-100%) scale(${this.mobile ? 0.85 : 0.95})`;
+    });
   }
 
   showTip(c, x, y) {
