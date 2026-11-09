@@ -329,7 +329,7 @@ async function buildMid(pa) {
   g.add(pa.roads);
   const C = (id) => cities.find((c) => c.id === id);
   const lud = comms.find((c) => c.key === 'ludere');
-  pa.trade = lud && C('changshu') ? buildTrade(world, lud, C('changshu'), ps)
+  pa.trade = lud && C('shanghai') ? buildTrade(world, lud, C('shanghai'), ps)
     : { group: new THREE.Group(), mat: { uniforms: { uA: { value: 0 } } }, update() {} };
   pa.hs = yrd ? buildHuangshan(world, hx, hz, ps) : { group: new THREE.Group(), update() {} };
   g.add(pa.trade.group, pa.hs.group);

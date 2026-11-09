@@ -1,7 +1,6 @@
 {
   "cities": { "nanjing": 2, "changzhou": 2, "changshu": 1, "shanghai": 2, "hangzhou": 2 },
   "communities": {
-    "ludere": [107, 57],
     "keting": [94, 68],
     "cyberia": [92, 69],
     "xingyouji": [93, 68],

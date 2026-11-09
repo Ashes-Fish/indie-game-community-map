@@ -37,7 +37,8 @@ export const HUB_CITIES = [...new Set(raw.map((r) => resolveCity(r)).filter(Bool
 // Hand-tuned extras for known communities: model = district look; toward = real address direction (lon,lat).
 // Communities without an entry get a key and a built-in model derived from their name.
 const META = {
-  'Ludere独游互助社区': { key: 'ludere', model: { kind: 'builtin', style: 'guild' }, prefDir: 3, logo: 'ludere', short: 'Ludere' },
+  // the survey lists 上海 first; the community is based in 常熟 (the user confirmed), so 常熟 is its city here
+  'Ludere独游互助社区': { key: 'ludere', model: { kind: 'builtin', style: 'guild' }, prefDir: 3, logo: 'ludere', short: 'Ludere', city: '常熟', otherCities: '' },
   '游戏客厅': { key: 'keting', model: { kind: 'builtin', style: 'tulou' }, toward: [120.25, 30.28], logo: 'keting' },
   '赛博利亚': { key: 'cyberia', model: { kind: 'builtin', style: 'cyber' }, toward: [120.02, 30.36], logo: 'cyberia' },
   '星游集游戏人据点': { key: 'xingyouji', model: { kind: 'builtin', style: 'observatory' }, toward: [120.02, 30.42], logo: 'xingyouji', short: '星游集' },
@@ -49,7 +50,8 @@ const META = {
 function strHash(s) { let h = 2166136261; for (const ch of s) h = Math.imul(h ^ ch.codePointAt(0), 16777619); return h >>> 0; }
 
 export function normalizeCommunity(r) {
-  const res = resolveCity(r);
+  const o = META[r.name];
+  const res = resolveCity(o && o.city ? { ...r, city: o.city, otherCities: o.otherCities ?? r.otherCities } : r);
   const city = res && CITIES.find((c) => c.id === cityId(res.city));
   if (!city) return null;
   const m = META[r.name] || {};

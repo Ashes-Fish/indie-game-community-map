@@ -144,7 +144,8 @@ export function buildRoads(world, cities, shared) {
 }
 
 export function buildTrade(world, from, to, shared) {
-  const pts = [[from.x, from.z], [from.x - 8, from.z - 9], ...[[121.1, 31.42], [120.9, 31.56]].map(([a, b]) => toWorld(a, b)), [to.x, to.z]];
+  // 常熟 → 上海 along the lowland between them (the waypoints are on the Yangtze's south bank)
+  const pts = [[from.x, from.z], ...[[120.9, 31.56], [121.1, 31.42]].map(([a, b]) => toWorld(a, b)), [to.x, to.z]];
   const { curve, pts: sp, len } = smoothPath(pts, 0.3);
   const yOf = (x, z) => world.heightY(x, z);
   const g = ribbon(sp, 0.55, yOf, 0.16);
