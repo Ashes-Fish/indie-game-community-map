@@ -8,12 +8,13 @@ const BANNER_ICONS = 6; // the rest show as "+N"; the full list is in the 社团
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 export class UI {
-  constructor({ cities, communities, sites, base, regionName, onPick, onSite, onCity, onReplay, onChina, onHub, patchName, mobile }) {
+  constructor({ cities, communities, sites, base, regionName, onPick, onSite, onCity, onReplay, onChina, onHub, onRegion, regions, patchName, mobile }) {
     this.root = document.getElementById('ui');
     this.root.style.setProperty('--frame', FRAME);
     this.root.style.setProperty('--frame-s', FRAME_S);
     this.cities = cities; this.comms = communities; this.base = base; this.mobile = mobile;
-    this.onPick = onPick; this.onSite = onSite; this.onCity = onCity; this.onHub = onHub; this.patchName = patchName || (() => null);
+    this.onPick = onPick; this.onSite = onSite; this.onCity = onCity; this.onHub = onHub; this.onRegion = onRegion; this.patchName = patchName || (() => null);
+    this.regions = regions || [];
     const logoSrc = (c) => (c.logo ? `${base}logos/${c.logo}.webp` : null);
     this.logoSrc = logoSrc;
     const logo = (c) => (c.logo ? `<img src="${logoSrc(c)}" alt="">` : `<span class="ph">${esc(c.glyph)}</span>`);
@@ -21,8 +22,10 @@ export class UI {
     document.body.appendChild(h('div', 'vignette'));
 
     // title
-    const title = h('div', 'title civ-panel', `<div class="seal">游</div><div><h1>中国独立游戏社团地图</h1><div class="sub">${regionName} · ${communities.length} 个社团 · ${cities.length} 座城市</div></div>`);
+    const title = h('div', 'title civ-panel', `<div class="seal">游</div><div><h1>中国独立游戏社团地图</h1><div class="sub">${regionName} · ${communities.length} 个社团 · ${cities.length} 座城市</div><div class="crumb"></div></div>`);
     this.root.appendChild(title);
+    this.crumb = title.querySelector('.crumb');
+    this.crumbKey = '';
 
     // list
     const lb = h('div', 'listbtn civ-panel', `${icon('list')}<span>社团列表</span><span class="n">${communities.length}</span>`);
@@ -59,9 +62,20 @@ export class UI {
       this.root.appendChild(el);
       return { el, c, s, pos: new THREE.Vector3(s.x, s.y + 4.4, s.z), shown: false };
     });
-    // country-scale banners: cities that crowd each other on screen merge into one (e.g. 长三角 · 7)
+    // country-scale banners: one per 城市群 (regions.js); regions without a community yet show as reserved
     this.count = Object.fromEntries(cities.map((c) => [c.id, communities.filter((m) => m.cityId === c.id).length]));
-    this.hubs = [];
+    this.hubs = this.regions.map((r) => {
+      const n = r.cities.reduce((s, c) => s + (this.count[c.id] || 0), 0);
+      const el = n ? h('div', 'banner hub', `<div class="bar"><div class="pop">${n}</div><div class="nm">${r.name}</div></div>`)
+        : h('div', 'rseal', `<i></i><span>${r.name}</span>`);
+      if (!n) el.title = r.name + ' · 暂无社团';
+      const lead = r.cities.slice().sort((a, b) => this.count[b.id] - this.count[a.id])[0];
+      el.style.setProperty('--c', lead ? lead.color : '#7a8699');
+      el.onclick = (e) => { e.stopPropagation(); this.onRegion(r); };
+      this.root.appendChild(el);
+      // anchor: the busiest city (so the banner stands on a real city seal), else the region's anchor point
+      return { el, r, n, pos: new THREE.Vector3(lead ? lead.x : r.ax, lead ? lead.y : 0, lead ? lead.z : r.az) };
+    });
     this.labels = [];
     const perCity = {};
     for (const s of sites) perCity[s.cityId] = (perCity[s.cityId] || 0) + 1;
@@ -88,6 +102,7 @@ export class UI {
     this.toasts = h('div', 'toasts');
     this.root.appendChild(this.toasts);
     this._v = new THREE.Vector3();
+    this.regionD = 1100;
   }
 
   addLabel(text, x, y, z, cls = '') {
@@ -108,7 +123,7 @@ export class UI {
     for (const b of this.banners) {
       b.pos.y = b.city.y + (b.city.top || 5.2);   // the skyline is built after the UI (scene.js buildPatch)
       const p = this.project(b.pos, cam, w, hh);
-      b.el.style.display = p.ok && dist < 1100 ? '' : 'none';   // national view: the ink map carries the city seals
+      b.el.style.display = p.ok && dist < this.regionD ? '' : 'none';   // country view: the region banners stand in
       if (p.ok) b.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-100%) scale(${sc})`;
     }
     const showTags = dist < 150;
@@ -130,42 +145,34 @@ export class UI {
     }
   }
 
+  // 城市群 banners at country scale; reserved ones fade in a little later (they are context, not destinations)
   updateHubs(cam, dist, w, hh) {
-    const on = dist >= 1100;
-    const groups = [];
-    if (on) {
-      const order = this.cities.filter((c) => this.count[c.id] && c.y != null).sort((a, b) => this.count[b.id] - this.count[a.id]);
-      for (const c of order) {
-        const p = this.project(this._v2 ? this._v2.set(c.x, c.y, c.z) : (this._v2 = new THREE.Vector3(c.x, c.y, c.z)), cam, w, hh);
-        if (!p.ok) continue;
-        const g = groups.find((q) => Math.hypot(q.x - p.x, q.y - p.y) < 70);
-        if (g) g.cities.push(c); else groups.push({ x: p.x, y: p.y, cities: [c] });
-      }
+    const on = dist >= this.regionD;
+    const sc = this.mobile ? 0.82 : 0.95;
+    const taken = [];   // screen boxes of the populated banners; reserved seals keep clear of them
+    for (const hub of this.hubs) {
+      if (!hub.n) continue;
+      const p = on ? this.project(hub.pos, cam, w, hh) : { ok: false };
+      hub.el.style.display = p.ok ? '' : 'none';
+      if (p.ok) { hub.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-100%) scale(${sc})`; taken.push({ x: p.x, y: p.y - 18 * sc, hw: 70 * sc, hh: 22 * sc }); }
     }
-    while (this.hubs.length < groups.length) {
-      const el = h('div', 'banner hub', '<div class="bar"><div class="pop"></div><div class="nm"></div></div>');
-      const hub = { el, g: null };
-      el.onclick = (e) => { e.stopPropagation(); if (hub.g) this.onHub(hub.g); };
-      this.root.appendChild(el);
-      this.hubs.push(hub);
+    for (const hub of this.hubs) {
+      if (hub.n) continue;
+      const p = on && dist > this.regionD * 1.5 ? this.project(hub.pos, cam, w, hh) : { ok: false };
+      let vis = p.ok;
+      if (vis) for (const t of taken) if (Math.abs(p.x - t.x) < t.hw + 50 && Math.abs(p.y - t.y) < t.hh + 14) { vis = false; break; }
+      hub.el.style.display = vis ? '' : 'none';
+      if (vis) hub.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-50%) scale(${this.mobile ? 0.8 : 1})`;
     }
-    this.hubs.forEach((hub, i) => {
-      const g = groups[i];
-      hub.el.style.display = g ? '' : 'none';
-      if (!g) return;
-      hub.g = g;
-      const lead = g.cities[0], n = g.cities.reduce((s, c) => s + this.count[c.id], 0);
-      const same = g.cities.every((c) => c.patch === lead.patch);
-      const name = g.cities.length === 1 ? lead.name : (same && this.patchName(lead.patch)) || `${lead.name}等`;
-      const key = name + n;
-      if (hub.key !== key) {
-        hub.key = key;
-        hub.el.querySelector('.pop').textContent = n;
-        hub.el.querySelector('.nm').textContent = name;
-        hub.el.style.setProperty('--c', lead.color);
-      }
-      hub.el.style.transform = `translate(${g.x}px,${g.y}px) translate(-50%,-100%) scale(${this.mobile ? 0.85 : 0.95})`;
-    });
+  }
+
+  // breadcrumb: 全国 › 城市群 › 城市, each step clickable
+  setCrumb(parts) {
+    const key = parts.map((p) => p.name).join('›');
+    if (key === this.crumbKey) return;
+    this.crumbKey = key;
+    this.crumb.innerHTML = parts.map((p, i) => `<span class="${i === parts.length - 1 ? 'cur' : ''}">${esc(p.name)}</span>`).join('<i>›</i>');
+    this.crumb.querySelectorAll('span').forEach((el, i) => { el.onclick = () => parts[i].go && parts[i].go(); });
   }
 
   showTip(c, x, y) {

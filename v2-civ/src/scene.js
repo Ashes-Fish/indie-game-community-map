@@ -16,6 +16,7 @@ import { buildSmoke, buildBirds, buildWalkers, livenBuildings } from './life.js'
 import { bakeAO } from './ao.js';
 import { HEX_R, toWorld } from './config.js';
 import { PATCHES, patchById, patchAt } from './patches.js';
+import { REGIONS, regionById, assignRegions, regionView } from './regions.js';
 import { dumpPins } from './layout.js';
 import PINS from './layout-pins.json';
 import { createPainter, paperMul, PAPER_STYLES } from './natink.js';
@@ -206,11 +207,13 @@ async function init() {
   dust = new Dust(); beams = new Beams();
   scene.add(dust.points, beams.group);
 
+  assignRegions(CITIES);
   ui = new UI({
     cities: CITIES, communities: COMMUNITIES, sites: patches.flatMap((pa) => pa.sites), base: BASE, mobile, regionName: '全国', onChina: goChina,
     onPick: (c, fly) => select(c, fly), onSite: (s, fly) => selectSite(s, fly), onCity: (city) => focusCity(city), onReplay: replay,
-    onHub: flyToHub, patchName: (id) => patchById(id)?.name,
+    onHub: flyToHub, onRegion: goRegion, regions: REGIONS, patchName: (id) => patchById(id)?.name,
   });
+  ui.regionD = REGION_D;
   ui.onClose = () => { selected = null; };
   if (patchById('yrd')) {
     const L = (text, x, y, z, cls) => { const [wx, wz] = yrdOld(x, z); ui.addLabel(text, wx, y, wz, cls); };
@@ -235,7 +238,7 @@ async function init() {
   await warmUp();
   progress(0.95, '即将完成…');
   // window.__dbg.pins() prints the snapshot to commit as src/layout-pins.json after adding communities
-  window.__dbg = { scene, cam, shared, paper, frame, buildLog, buildMid, buildNear, timed, renderer, camera, patches, COMMUNITIES, CITIES, select, focusCity, perf, NAT_VIEW, pins: () => JSON.stringify(dumpPins(CITIES, COMMUNITIES), null, 2), get post() { return post; } };
+  window.__dbg = { scene, cam, shared, paper, frame, buildLog, buildMid, buildNear, timed, renderer, camera, patches, COMMUNITIES, CITIES, select, focusCity, goRegion, REGIONS, perf, NAT_VIEW, pins: () => JSON.stringify(dumpPins(CITIES, COMMUNITIES), null, 2), get post() { return post; } };
   start();
   scheduler();
 }
@@ -554,6 +557,36 @@ function selectSite(s, fly) {
 function focusCity(city) {
   cam.flyTo(city.x, city.z + 4, 70, 1.4, 0);
 }
+// a 城市群 banner: frame all of its cities (a region without any yet: its anchor at region height)
+const REGION_D = 1100;   // above this distance the country view shows 城市群 banners; below it, city banners
+function goRegion(r) {
+  if (ui) ui.closePanel();
+  const v = regionView(r, portrait);
+  cam.flyTo(v.x, v.z, v.d, 1.9);
+}
+// which 城市群 the camera is looking at (for the breadcrumb): the one whose cities are nearest the target
+function regionUnderCamera() {
+  let best = null, bestD = Infinity;
+  for (const r of REGIONS) {
+    const pts = r.cities.length ? r.cities : [{ x: r.ax, z: r.az }];
+    for (const c of pts) { const d = Math.hypot(c.x - cam.target.x, c.z - cam.target.z); if (d < bestD) { bestD = d; best = r; } }
+  }
+  return bestD < 600 ? best : null;
+}
+function cityUnderCamera() {
+  let best = null, bestD = 90;
+  for (const c of CITIES) { const d = Math.hypot(c.x - cam.target.x, c.z - cam.target.z); if (d < bestD) { bestD = d; best = c; } }
+  return best;
+}
+function updateCrumb() {
+  const parts = [{ name: '全国', go: goChina }];
+  if (cam.dist < REGION_D) {
+    const r = regionUnderCamera();
+    if (r) parts.push({ name: r.name, go: () => goRegion(r) });
+    if (cam.dist < 260) { const c = cityUnderCamera(); if (c) parts.push({ name: c.name, go: () => focusCity(c) }); }
+  }
+  ui.setCrumb(parts);
+}
 // a national banner: one city → that city; several in one patch → the patch; otherwise frame them all
 function flyToHub(g) {
   if (g.cities.length === 1) return focusCity(g.cities[0]);
@@ -671,6 +704,7 @@ function frame() {
   dust.update(dt); beams.update(dt);
   dust.mat.uniforms.uScale.value = innerHeight * renderer.getPixelRatio() * 0.9;
   ui.update(camera, cam.dist, (c) => built.has(c.key));
+  updateCrumb();
   paper.update(camera, renderer.domElement.height);
   if (post) { post.update(cam.dist); post.render(); } else renderer.render(scene, camera);
   paper.step();   // draw one missing paper tile per frame
