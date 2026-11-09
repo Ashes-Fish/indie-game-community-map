@@ -33,7 +33,7 @@ export class World {
     this.r0 = Math.floor(z0 / rh) - 1; this.c0 = Math.floor(x0 / cw) - 1;
     this.NY = Math.ceil(z1 / rh) + 2 - this.r0; this.NX = Math.ceil(x1 / cw) + 2 - this.c0;
     this.uniforms = {
-      uHex: { value: null }, uWater: { value: null }, uNormalTex: { value: null }, uInk: { value: null }, uRevealB: { value: 0 },
+      uHex: { value: null }, uWater: { value: null }, uNormalTex: { value: null }, uRevealB: { value: 0 },
       uRect: { value: new THREE.Vector4(x0, z0, x1 - x0, z1 - z0) }, uHexGrid: { value: new THREE.Vector4(this.c0, this.r0, this.NX, this.NY) },
     };
   }

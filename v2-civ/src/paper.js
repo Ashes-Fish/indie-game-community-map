@@ -20,7 +20,7 @@ export class PaperTiles {
     this.frame = 0;
     // an empty patch: nothing revealed and no patch rect, so the terrain shader draws only the national paper
     this.base = { ...shared.uniforms,
-      uHex: { value: null }, uWater: { value: null }, uNormalTex: { value: null }, uInk: { value: null }, uRevealB: { value: 0 },
+      uHex: { value: null }, uWater: { value: null }, uNormalTex: { value: null }, uRevealB: { value: 0 },
       uRect: { value: new THREE.Vector4(1e5, 1e5, 1, 1) }, uHexGrid: { value: new THREE.Vector4(0, 0, 0, 0) }, uIsPaper: { value: 1 } };
     this.group = new THREE.Group();
     this.pool = [];

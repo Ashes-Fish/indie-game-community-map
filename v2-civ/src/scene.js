@@ -3,7 +3,6 @@ import './style.css';
 import { World, loadImage } from './world.js';
 import { CITIES, COMMUNITIES, HUB_CITIES } from './data.js';
 import { PatchTerrain, loadTerrainTextures, makeRippleTexture, MAX_OWNERS } from './terrain.js';
-import { buildInkTexture } from './parchment.js';
 import { setRenderer } from './assets.js';
 import { CivCamera } from './camera.js';
 import { buildProps } from './props.js';
@@ -33,9 +32,11 @@ document.querySelector('#loader .sub').textContent = '全国';
 const coarse = matchMedia('(pointer: coarse)').matches;
 const mobile = qs.get('q') === 'low' || (qs.get('q') !== 'high' && (coarse || innerWidth < 720) && Math.min(innerWidth, innerHeight) < 900);
 const Q = mobile
-  ? { mobile: true, dpr: Math.min(devicePixelRatio, 2), post: false, shadow: 1024, inkPerKm: 2.4, trees: 0.5, paperPerKm: 1.1 }
-  : { mobile: false, dpr: Math.min(devicePixelRatio, 1.5), post: true, shadow: 2048, inkPerKm: 3.4, trees: 1, paperPerKm: 2.2 };
-const FAR_D = 1100;        // country scale beyond this camera distance: paper, whole-patch terrain, national banners
+  ? { mobile: true, dpr: Math.min(devicePixelRatio, 2), post: false, shadow: 1024, trees: 0.5, paperPerKm: 1.1 }
+  : { mobile: false, dpr: Math.min(devicePixelRatio, 1.5), post: true, shadow: 2048, trees: 1, paperPerKm: 2.2 };
+const FAR_D = 1500;        // country scale beyond this camera distance: paper and whole-patch terrain only
+const LAND_IN = 900;       // ...and the land's own content (buildings, roads, rivers, shadows) is fully there below this: a band, not a switch
+const landK = (d) => 1 - THREE.MathUtils.smoothstep(d, LAND_IN, FAR_D);
 
 const loadbar = document.getElementById('loadbar');
 const loadtip = document.getElementById('loadtip');
@@ -88,8 +89,6 @@ scene.add(sun, sun.target);
 scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x7d6c48, 0.85));
 
 // a transparent 1×1 ink layer until a patch's own ink map is drawn
-const NO_INK = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat);
-NO_INK.needsUpdate = true;
 
 // uniforms every patch shares; each patch adds its own (World.uniforms) on top
 const shared = {
@@ -99,7 +98,7 @@ const shared = {
     uOwnCol2: { value: Array.from({ length: MAX_OWNERS }, () => new THREE.Color(1, 1, 1)) },
     uHiHex: { value: new THREE.Vector2(999, 999) }, uHi: { value: 0 },
     uNat: { value: null }, uNatRect: { value: new THREE.Vector4(0, 0, 1, 1) }, uNatBounds: { value: new THREE.Vector4(0, 0, 1, 1) },
-    uNatOn: { value: 1 }, uIsPaper: { value: 0 }, uPaperMul: { value: paperMul(PAPER) },
+    uNatOn: { value: 1 }, uIsPaper: { value: 0 }, uPaperMul: { value: paperMul(PAPER) }, uLandA: { value: 0 },
   },
 };
 const REVEAL_FINAL = 80 * 1.5;
@@ -169,7 +168,7 @@ async function init() {
   const worlds = PATCHES.map((P) => new World(P));
   const riversP = worlds.map((w) => fetch(`${BASE}data/patches/${w.id}/rivers.json`).then((r) => r.json()));
   const [nat, lg, terrTex] = await Promise.all([
-    createPainter(BASE, PAPER, HUB_CITIES), loadLogos(), loadTerrainTextures(BASE + 'tex/terrain.webp'), ...worlds.map((w) => w.load(BASE)),
+    createPainter(BASE, PAPER, HUB_CITIES, PATCHES), loadLogos(), loadTerrainTextures(BASE + 'tex/terrain.webp'), ...worlds.map((w) => w.load(BASE)),
   ]);
   logos = lg;
   shared.uniforms.uTerr.value = terrTex;
@@ -193,7 +192,6 @@ async function init() {
     world.buildNormalTex();
     for (const c of cities) c.y = world.heightY(c.x, c.z);
     for (const s of world.sites) { s.y = world.heightY(s.x, s.z); for (const c of s.members) c.y = s.y; }
-    world.uniforms.uInk.value = NO_INK;
     // the national paper this patch fades into at its edges: the coarsest tile until its own crop is drawn (buildMid)
     world.uniforms.uNat = { value: paper.root.tex }; world.uniforms.uNatRect = { value: paper.root.rect.clone() };
     const ps = world.shared(shared);
@@ -302,16 +300,6 @@ async function scheduler() {
 async function buildMid(pa) {
   const { world, ps, cities, comms, sites, rivers } = pa;
   const yrd = world.id === 'yrd';
-  const inkSize = Math.min(2048, Math.round((world.x1 - world.x0) * Q.inkPerKm));
-  let t0 = performance.now();
-  const ink = await buildInkTexture(world, rivers.rivers, inkSize, CITIES.map((c) => c.name), PAPER_STYLES[PAPER].mtn);
-  buildLog.push([world.id + ' ink', +(performance.now() - t0).toFixed(1)]);
-  // a canvas uploads through a slow conversion path (~300 ms for 2048²); an ImageBitmap goes straight to the GPU
-  ink.image = await createImageBitmap(ink.image, { premultiplyAlpha: 'none' });
-  ink.needsUpdate = true;
-  world.uniforms.uInk.value = ink;
-  timed(world.id + ' ink-upload', () => renderer.initTexture(ink));
-  await tick();
   // a sharp crop of the national paper for the patch's edges (about the resolution of the paper tiles around it)
   const r = [world.x0, world.z0, world.x1, world.z1], cap = Q.mobile ? 1024 : 2048, k = Math.min(Q.paperPerKm, cap / Math.max(r[2] - r[0], r[3] - r[1]));
   world.uniforms.uNat.value = await painter.paint(r, Math.round((r[2] - r[0]) * k), Math.round((r[3] - r[1]) * k));
@@ -495,24 +483,24 @@ function updatePatch(pa, dt, far) {
   const u = Math.min(1, Math.max(0, (pa.revealT += dt) / T_REVEAL));
   pa.world.uniforms.uRevealB.value = (1 - Math.pow(1 - u, 2.4)) * REVEAL_FINAL;
   if (pa.mid && !far) {
-    const t = pa.buildT += dt;
-    pa.hs.group.scale.setScalar(Math.max(0.001, Math.min(1, (pa.revealT - T_REVEAL * 0.6) / 0.8)));
+    const t = pa.buildT += dt, k = landK(cam.dist), kk = k * k * (3 - 2 * k);
+    pa.hs.group.scale.setScalar(Math.max(0.001, Math.min(1, (pa.revealT - T_REVEAL * 0.6) / 0.8) * kk));
     for (const c of pa.comms) {
       const t0 = c.buildAt;
       if (t < t0) continue;
-      if (!built.has(c.key)) {
+      if (!built.has(c.key) && kk > 0.6) {
         built.add(c.key);
         const k = THREE.MathUtils.clamp(cam.dist / 110, 1, 4);
         dust.burst(c.x, c.y, c.z, mobile ? 40 : 70, 3.2 * Math.sqrt(k));
       }
       const p = Math.min(1, (t - t0) / T_GROW);
-      const sxz = 0.55 + 0.45 * Math.min(1, p * 1.6);
-      c.inner.scale.set(sxz, Math.max(0.001, easeOutBack(p, 2.4)), sxz);
+      const sxz = (0.55 + 0.45 * Math.min(1, p * 1.6)) * (0.4 + 0.6 * kk);
+      c.inner.scale.set(sxz, Math.max(0.001, easeOutBack(p, 2.4) * kk), sxz);
       const pf = Math.min(1, Math.max(0, (t - t0 - 0.5) / 0.7));
-      c.flag.scale.set(1, Math.max(0.001, easeOutBack(pf, 1.8)), 1);
+      c.flag.scale.set(1, Math.max(0.001, easeOutBack(pf, 1.8) * kk), 1);
     }
     const last = pa.comms.length ? pa.comms[pa.comms.length - 1].buildAt : 0;
-    pa.trade.mat.uniforms.uA.value = Math.min(1, Math.max(0, (t - last - 0.6) / 1.0));
+    pa.trade.mat.uniforms.uA.value = Math.min(1, Math.max(0, (t - last - 0.6) / 1.0)) * kk;
     pa.trade.update(dt); pa.hs.update(shared.uniforms.uTime.value);
   }
   if (pa.near) {
@@ -532,7 +520,7 @@ function updatePatch(pa, dt, far) {
 let selected = null;
 const ray = new THREE.Raycaster();
 function pick(x, y) {
-  if (farOn) return null;
+  if (farOn || landK(cam.dist) < 0.5) return null;
   const r = canvas.getBoundingClientRect();
   ray.setFromCamera(new THREE.Vector2(((x - r.left) / r.width) * 2 - 1, -((y - r.top) / r.height) * 2 + 1), camera);
   const hit = ray.intersectObjects(proxies, false)[0];
@@ -691,6 +679,9 @@ function frame() {
   if (near !== camera.near || far !== camera.far) { camera.near = near; camera.far = far; camera.updateProjectionMatrix(); }
   // country scale: only the paper, whole-patch terrain and national banners; shadow map frozen
   const isFar = cam.dist > FAR_D;
+  const lk = landK(cam.dist), lkS = lk * lk * (3 - 2 * lk);
+  shared.uniforms.uLandA.value = lkS;
+  sun.shadow.intensity = lkS;
   if (isFar !== farOn) {
     farOn = isFar;
     for (const pa of patches) if (pa.mid) pa.mid.visible = !isFar;

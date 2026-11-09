@@ -4,6 +4,8 @@
 // on fixed global grids, and line widths / glyph sizes are in tile pixels, so each level reads at a constant screen size.
 // Style 'qinglv' (墨线 + 青绿淡彩) is the chosen look; 'mo' (纯墨 + 做旧纸黄) stays as ?paper=mo.
 // Plain 2D canvas, no DOM and no three.js: runs in the paper worker (paperWorker.js) or, as a fallback, on the page.
+// One map at every scale: inside a land patch the painter reads the patch's own fine height / water grids (coast, lakes,
+// low hills) and thin rivers, so the paper there needs no second ink map; the extra detail fades in with resolution.
 import { Z0 } from './albers.js';
 import { toWorld, hash2, rng } from './config.js';
 import { drawMountain, compass, KAI } from './inkdraw.js';
@@ -43,10 +45,60 @@ function bboxOf(pts) {
   for (const [x, z] of pts) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z; }
   return [x0, z0, x1, z1];
 }
+const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const hits = (b, r, m = 0) => b[0] <= r[2] + m && b[2] >= r[0] - m && b[1] <= r[3] + m && b[3] >= r[1] - m;
 
+// A land patch's fine data: height / water grids (bilinear), thin rivers, lowland level for the hill thresholds.
+async function loadFine(base, P) {
+  const get = (f) => fetch(base + 'data/patches/' + P.id + '/' + f);
+  const px = async (f) => {
+    const bmp = await createImageBitmap(await get(f).then((r) => r.blob()), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+    const c = mkCanvas(bmp.width, bmp.height), g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(bmp, 0, 0);
+    return { d: g.getImageData(0, 0, bmp.width, bmp.height).data, w: bmp.width, h: bmp.height };
+  };
+  const [h, w, rv] = await Promise.all([px('height.png'), px('water.png'), get('rivers.json').then((r) => r.json())]);
+  const [x0, z0, x1, z1] = P.rect;
+  const HM = new Float32Array(h.w * h.h), SD = new Float32Array(w.w * w.h), SE = new Float32Array(w.w * w.h);
+  for (let i = 0; i < HM.length; i++) { const v = h.d[i * 4] / 255; HM[i] = P.hmax * v * v; }
+  for (let i = 0; i < SD.length; i++) { SD[i] = (w.d[i * 4] - 128) / 10; SE[i] = w.d[i * 4 + 1] / 255; }
+  const kh = h.w / (x1 - x0), kw = w.w / (x1 - x0);
+  const bil = (A, W, H, k, x, z) => {
+    const fx = Math.max(0, Math.min(W - 1.001, (x - x0) * k - 0.5)), fy = Math.max(0, Math.min(H - 1.001, (z - z0) * k - 0.5));
+    const i0 = fx | 0, j0 = fy | 0, tx = fx - i0, ty = fy - j0, i = j0 * W + i0;
+    return (A[i] * (1 - tx) + A[i + 1] * tx) * (1 - ty) + (A[i + W] * (1 - tx) + A[i + W + 1] * tx) * ty;
+  };
+  const F = {
+    id: P.id, x0, z0, x1, z1, base: 0,
+    hm: (x, z) => bil(HM, h.w, h.h, kh, x, z), sdf: (x, z) => bil(SD, w.w, w.h, kw, x, z), sea: (x, z) => bil(SE, w.w, w.h, kw, x, z),
+    thin: rv.rivers.filter((r) => !r.water).map((r) => ({ p: r.pts, b: bboxOf(r.pts) })),
+  };
+  if (P.id !== 'yrd') {   // lowland level (world.js): hill thresholds read elevation above it
+    const lows = [];
+    for (let j = 0; j < h.h; j += 6) for (let i = 0; i < h.w; i += 6) if (F.sdf(x0 + (i + 0.5) / kh, z0 + (j + 0.5) / kh) < 0) lows.push(HM[j * h.w + i]);
+    lows.sort((a, b) => a - b);
+    F.base = lows.length ? lows[Math.floor(lows.length * 0.25)] : 0;
+  }
+  return F;
+}
+
+// painted names inside a patch (lakes, seas, mountains, rivers); sizes in km, so they grow with the zoom
+const INK = 'rgba(30,50,60,0.85)';
+const FINE_LABELS = {
+  yrd: [
+    [123.05, 30.75, '東海', 13, { vertical: true, bold: true, color: 'rgba(40,52,62,0.8)' }],
+    [122.55, 33.15, '黄海', 11, { vertical: true, bold: true, color: 'rgba(40,52,62,0.75)' }],
+    [117.55, 31.6, '巢湖', 4.5, { color: INK }], [119.25, 32.82, '高邮湖', 4.2, { color: INK }],
+    [118.6, 33.32, '洪泽湖', 4.6, { color: INK }], [118.95, 29.58, '千岛湖', 4.0, { color: INK }],
+    [117.82, 30.5, '九华山', 4.6, { spacing: 0.15 }], [120.62, 29.72, '会稽山', 4.6, { spacing: 0.15 }],
+    [121.15, 29.62, '四明山', 4.6, { spacing: 0.15 }], [120.95, 29.05, '天台山', 4.6, { spacing: 0.15 }],
+    [117.7, 31.15, '长 江', 5.2, { color: INK }], [119.75, 29.62, '富春江', 4.0, { color: INK }],
+    [120.4, 33.0, '淮 扬', 6, { spacing: 0.3, color: 'rgba(38,28,20,0.6)' }],
+  ],
+};
+
 // Load the national data once; returns { rect, draw(ctx, rect, w, h) } (draw paints rect [x0, z0, x1, z1] km into w × h px).
-export async function loadNational(base, style, hubs = []) {
+export async function loadNational(base, style, hubs = [], patches = []) {
   const S = PAPER_STYLES[style] || PAPER_STYLES.qinglv;
   const [map, rj, elevImg] = await Promise.all([
     fetch(base + 'data/china/map.json').then((r) => r.json()),
@@ -65,7 +117,14 @@ export async function loadNational(base, style, hubs = []) {
   const elev = (x, z) => { const k = cell(x, z); if (k < 0) return -1; const v = ED[k] / 255; return ED[k] ? v * v * 6000 : 0; };
   const inCN = (x, z) => { const k = cell(x, z); return k >= 0 && ED[k + 1] > 127; };
   // beyond the elevation grid: the South China Sea and the Pacific are open sea, the far west plain paper
-  const isSea = (x, z) => { const e = elev(x, z); return e < 0 ? Z0 - z < rj.ymin || x > rj.xmax : e === 0; };
+  const fine = await Promise.all(patches.map((P) => loadFine(base, P)));
+  const finePatch = (x, z) => { for (const F of fine) if (x > F.x0 + 8 && x < F.x1 - 8 && z > F.z0 + 8 && z < F.z1 - 8) return F; return null; };
+  const isSea = (x, z) => {
+    const F = finePatch(x, z);
+    if (F) return F.sdf(x, z) > 0 && F.sea(x, z) > 0.5;
+    const e = elev(x, z); return e < 0 ? Z0 - z < rj.ymin || x > rj.xmax : e === 0;
+  };
+  const elevA = (x, z) => { const F = finePatch(x, z); return F ? (F.sdf(x, z) > 0 ? 0 : Math.max(1, F.hm(x, z))) : elev(x, z); };
 
   // the national rect: the whole country plus a sea margin
   let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
@@ -123,8 +182,18 @@ export async function loadNational(base, style, hubs = []) {
       gr.addColorStop(0, S.stain); gr.addColorStop(1, 'rgba(0,0,0,0)');
       g.fillStyle = gr; g.fillRect(px - rr, py - rr, 2 * rr, 2 * rr);
     }
-    // sea: a mask at half resolution (plus a one-cell border, so coast edges match the neighbour tile)
-    const MW = Math.ceil(cw / 2) + 2, MH = Math.ceil(chh / 2) + 2, ck = (r[2] - r[0]) / (MW - 2);
+    // fine patch data in this tile (from ~0.6 px/km): its coast, lakes and rivers replace the coarse national ones inside the patch
+    const fineHere = s >= 0.6 ? fine.filter((F) => hits([F.x0 + 8, F.z0 + 8, F.x1 - 8, F.z1 - 8], r)) : [];
+    const outsideFine = (fn) => {
+      if (!fineHere.length) return fn();
+      g.save(); g.beginPath(); g.rect(-50, -50, cw + 100, chh + 100);
+      for (const F of fineHere) { const [a, b] = P(F.x0 + 8, F.z0 + 8); g.rect(a, b, (F.x1 - F.x0 - 16) * s, (F.z1 - F.z0 - 16) * s); }
+      g.clip('evenodd'); fn(); g.restore();
+    };
+    const fm = smooth(0.5, 2.0, s);   // how much of the patch's own detail (low hills, glyph sizes) shows
+    // sea: a mask at half resolution (full where fine data is drawn), plus a one-cell border, so coast edges match the neighbour tile
+    const div = fineHere.length ? 1 : 2;
+    const MW = Math.ceil(cw / div) + 2, MH = Math.ceil(chh / div) + 2, ck = (r[2] - r[0]) / (MW - 2);
     const sea = new Uint8Array(MW * MH);
     for (let j = 0; j < MH; j++) for (let i = 0; i < MW; i++) sea[j * MW + i] = isSea(r[0] + (i - 0.5) * ck, r[1] + (j - 0.5) * ck) ? 1 : 0;
     const mk = mkCanvas(MW, MH);
@@ -159,38 +228,77 @@ export async function loadNational(base, style, hubs = []) {
         g.stroke();
       }
     }
-    // lakes and rivers (more of the small rivers as resolution grows)
-    const rankMax = s < 0.2 ? 4 : s < 0.5 ? 5 : 6;
-    for (const l of lakes) {
-      if (!hits(l.b, r, 5)) continue;
-      g.beginPath(); for (const ring of l.rs) path(ring);
-      g.fillStyle = S.lake; g.fill('evenodd');
-      g.strokeStyle = S.coast; g.lineWidth = 0.8; g.stroke();
+    // inside a patch: inland water (lakes, wide rivers) and the coast line from its fine water grid
+    if (fineHere.length) {
+      const mk2 = mkCanvas(MW, MH), mg2 = mk2.getContext('2d');
+      const lk = S.lake.match(/[\d.]+/g).map(Number), ci = S.coast.match(/[\d.]+/g).map(Number);
+      const wd = mg2.createImageData(MW, MH), cd = mg2.createImageData(MW, MH);
+      const lake = new Uint8Array(MW * MH), inF = new Uint8Array(MW * MH);
+      for (let j = 0; j < MH; j++) for (let i = 0; i < MW; i++) {
+        const x = r[0] + (i - 0.5) * ck, z = r[1] + (j - 0.5) * ck, F = finePatch(x, z), q = j * MW + i;
+        if (!F) continue;
+        inF[q] = 1; lake[q] = F.sdf(x, z) > 0 && F.sea(x, z) <= 0.5 ? 1 : 0;
+      }
+      for (let j = 1; j < MH - 1; j++) for (let i = 1; i < MW - 1; i++) {
+        const q = j * MW + i;
+        if (!inF[q]) continue;
+        if (lake[q]) { wd.data[q * 4] = lk[0]; wd.data[q * 4 + 1] = lk[1]; wd.data[q * 4 + 2] = lk[2]; wd.data[q * 4 + 3] = lk[3] * 255; }
+        if (!(inF[q - 1] && inF[q + 1] && inF[q - MW] && inF[q + MW])) continue;
+        const edge = (A) => A[q - 1] !== A[q] || A[q + 1] !== A[q] || A[q - MW] !== A[q] || A[q + MW] !== A[q];
+        if ((lake[q] && edge(lake)) || (sea[q] && edge(sea))) { cd.data[q * 4] = ci[0]; cd.data[q * 4 + 1] = ci[1]; cd.data[q * 4 + 2] = ci[2]; cd.data[q * 4 + 3] = ci[3] * 255; }
+      }
+      const fx = cw / (MW - 2), fy = chh / (MH - 2);
+      mg2.putImageData(wd, 0, 0); g.imageSmoothingEnabled = true; g.drawImage(mk2, -fx, -fy, MW * fx, MH * fy);
+      mg2.putImageData(cd, 0, 0); g.save(); g.filter = 'blur(0.5px)'; g.drawImage(mk2, -fx, -fy, MW * fx, MH * fy); g.restore();
     }
-    for (const rv of rivers) {
-      if (rv.r > rankMax || !hits(rv.b, r, 5)) continue;
-      g.beginPath(); path(rv.p);
-      if (rv.r <= 3) { g.strokeStyle = S.river; g.lineWidth = 3.4; g.stroke(); g.strokeStyle = S.paper; g.lineWidth = 1.5; g.stroke(); }
-      else { g.strokeStyle = S.river; g.lineWidth = rv.r <= 4 ? 1.4 : 0.9; g.stroke(); }
+    // lakes and rivers (more of the small rivers as resolution grows); the patches' own water replaces them inside
+    const rankMax = s < 0.2 ? 4 : s < 0.5 ? 5 : 6;
+    outsideFine(() => {
+      for (const l of lakes) {
+        if (!hits(l.b, r, 5)) continue;
+        g.beginPath(); for (const ring of l.rs) path(ring);
+        g.fillStyle = S.lake; g.fill('evenodd');
+        g.strokeStyle = S.coast; g.lineWidth = 0.8; g.stroke();
+      }
+      for (const rv of rivers) {
+        if (rv.r > rankMax || !hits(rv.b, r, 5)) continue;
+        g.beginPath(); path(rv.p);
+        if (rv.r <= 3) { g.strokeStyle = S.river; g.lineWidth = 3.4; g.stroke(); g.strokeStyle = S.paper; g.lineWidth = 1.5; g.stroke(); }
+        else { g.strokeStyle = S.river; g.lineWidth = rv.r <= 4 ? 1.4 : 0.9; g.stroke(); }
+      }
+    });
+    // thin rivers of the patches (not wide enough for the water grid)
+    for (const F of fineHere) {
+      g.strokeStyle = 'rgba(52,72,84,0.75)'; g.lineWidth = 0.8 + 0.65 * s; g.globalAlpha = smooth(0.6, 1.4, s);
+      for (const rv of F.thin) { if (!hits(rv.b, r, 5)) continue; g.beginPath(); path(rv.p); g.stroke(); }
+      g.globalAlpha = 1;
     }
     // mountains: rugged ground on a fixed grid (spacing by resolution); the flat plateaus stay open paper
     const sp = Math.max(9, GLYPH_PX / s), gs = sp * s / GLYPH_PX;    // gs > 1 once the spacing stops shrinking
     const glyphs = [];
     for (let gz = Math.floor((r[1] - sp) / (sp * 0.82)); gz * sp * 0.82 < r[3] + 3 * sp; gz++) for (let gx = Math.floor((r[0] - 2 * sp) / sp); gx * sp < r[2] + 2 * sp; gx++) {
       const x = (gx + 0.05 + hash2(gx * 3 + 1, gz * 5 + 2) * 0.9) * sp, z = (gz + 0.15 + hash2(gx * 7 + 3, gz * 11 + 4) * 0.7) * sp * 0.82;
-      const e = elev(x, z);
+      const e = elevA(x, z);
       if (e <= 0) continue;
-      const nb = [[30, 0], [-30, 0], [0, 30], [0, -30], [21, 21], [-21, -21]].map(([dx, dz]) => elev(x + dx, z + dz)).filter((v) => v > 0);
+      const nb = [[30, 0], [-30, 0], [0, 30], [0, -30], [21, 21], [-21, -21]].map(([dx, dz]) => elevA(x + dx, z + dz)).filter((v) => v > 0);
       const rel = nb.length ? Math.max(e, ...nb) - Math.min(e, ...nb) : 0;
-      if (!(rel > (e > 3500 ? 1100 : 700) || (rel > 420 && e > 900 && e < 3500))) continue;
-      glyphs.push({ x, z, e, cn: inCN(x, z), seed: (gx * 73856093) ^ (gz * 19349663) });
+      // inside a patch, low hills above its lowland level count too (the threshold relaxes as the resolution grows)
+      const F = fm > 0 ? finePatch(x, z) : null, relM = F ? e - F.base : 0;
+      const low = F && relM > 140 + hash2(gx * 17 + 1, gz * 19 + 3) * 80 + (1 - fm) * 900;
+      if (!(low || rel > (e > 3500 ? 1100 : 700) || (rel > 420 && e > 900 && e < 3500))) continue;
+      glyphs.push({ x, z, e, relM: Math.max(0, relM), fine: !!F, cn: inCN(x, z), seed: (gx * 73856093) ^ (gz * 19349663) });
     }
     glyphs.sort((a, b) => a.z - b.z || a.x - b.x);
     for (const m of glyphs) {
       const R = rng(m.seed);
       const [px, py] = P(m.x, m.z);
-      const w = (11 + Math.min(m.e, 5500) / 420) * gs * (0.85 + R() * 0.3);
-      const h = w * (0.5 + Math.min(m.e, 5500) / 9000 + R() * 0.1);
+      const rw = R(), rh = R();
+      let w = (11 + Math.min(m.e, 5500) / 420) * gs * (0.85 + rw * 0.3);
+      let h = w * (0.5 + Math.min(m.e, 5500) / 9000 + rh * 0.1);
+      if (m.fine) {   // the patch's own glyph proportions (km-sized, so they grow with the zoom), blended in with the resolution
+        const wf = (4.2 + Math.min(m.relM, 1500) / 260) * s * (0.85 + rw * 0.3), hf = wf * (0.48 + Math.min(m.relM, 1500) / 3200 + rh * 0.1);
+        w += (wf - w) * fm; h += (hf - h) * fm;
+      }
       g.globalAlpha = m.cn ? 1 : 0.45;
       drawMountain(g, px, py, w, h, R, m.e > 2600, S.mtn);
     }
@@ -200,7 +308,7 @@ export async function loadNational(base, style, hubs = []) {
     g.setLineDash([5, 3.5]); g.strokeStyle = S.province; g.lineWidth = 1.1;
     strokeList(provLand);
     g.setLineDash([]);
-    g.strokeStyle = S.coast; g.lineWidth = 1.4; strokeList(natCoast);
+    outsideFine(() => { g.strokeStyle = S.coast; g.lineWidth = 1.4; strokeList(natCoast); });
     g.strokeStyle = S.border[0]; g.lineWidth = 3.2; strokeList(natLand);
     g.strokeStyle = S.border[1]; g.lineWidth = 1.3; strokeList(natLand);
     // province names (coarse tiles), city seals: capitals and community cities always, every prefecture seat when fine
@@ -227,6 +335,22 @@ export async function loadNational(base, style, hubs = []) {
         g.font = `400 ${c.hub ? 15 : c.cap ? 13 : 11}px ${KAI}`; g.fillStyle = `rgba(${S.mtn.ink},0.88)`;
         g.fillText(c.s, px + rr * 2.2, py);
       }
+    }
+    // painted names inside a patch, sized in km and fading in with the resolution
+    if (s >= 1.2 && fineHere.length) {
+      g.textBaseline = 'middle'; g.textAlign = 'center';
+      for (const F of fineHere) for (const [lo, la, text, size, opt] of FINE_LABELS[F.id] || []) {
+        const [lx, lz] = toWorld(lo, la);
+        if (!hits([lx - 30, lz - 30, lx + 30, lz + 30], r)) continue;
+        const [px, py] = P(lx, lz), fs = size * s;
+        g.save(); g.globalAlpha = smooth(1.2, 2.6, s);
+        g.font = (opt.bold ? 700 : 400) + ' ' + fs + 'px ' + KAI; g.fillStyle = opt.color || 'rgba(38,28,20,0.86)';
+        if (opt.vertical) [...text].forEach((ch, i) => g.fillText(ch, px, py + (i - (text.length - 1) / 2) * fs * 1.15));
+        else if (opt.spacing) { const cs = [...text], step = fs * (1 + opt.spacing); cs.forEach((ch, i) => g.fillText(ch, px + (i - (cs.length - 1) / 2) * step, py)); }
+        else g.fillText(text, px, py);
+        g.restore();
+      }
+      g.textAlign = 'left';
     }
     // 南海诸岛 inset and compass
     if (hits(INSET, r, 600)) {

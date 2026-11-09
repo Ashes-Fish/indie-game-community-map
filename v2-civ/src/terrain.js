@@ -58,7 +58,6 @@ const FRAG_PARS = /* glsl */`
 ${GLSL_COMMON}
 uniform sampler2D uWater;
 uniform sampler2D uNormalTex;
-uniform sampler2D uInk;
 uniform sampler2DArray uTerr;
 uniform sampler2D uRipple;
 uniform vec3 uOwnCol[${MAX_OWNERS}];
@@ -369,39 +368,17 @@ const FRAG_MAIN = /* glsl */`
 
   // ---- fog of war: paper map ----
   vec3 pap = C_PAPER;
-  // how far inside the patch (0 at its edge, 1 beyond ~70 km in); at country scale the whole patch defers to the map
-  float deP = min(min(p.x - WXMIN, WXMIN + WXSPAN - p.x), min(p.y - WZMIN, WZMIN + WZSPAN - p.y));
-  float inR = smoothstep(10.0, 70.0, deP + (fbm3(p * 0.015) - 0.5) * 50.0) * (1.0 - smoothstep(850.0, 1100.0, uCamDist));
-  // pure national paper on a patch: let the paper tile underneath show, so patch and map never disagree
-  if (uIsPaper < 0.5 && uNatOn > 0.5 && inR < 0.001 && rev < 0.001 && fv < 0.18) discard;
+  // the paper of an unrevealed pixel is the national paper map (one map at every scale, painted from the patch's own
+  // fine data inside it): a pure-paper pixel is dropped so the paper tile underneath shows, and patch and map never
+  // disagree. Only the band around revealed land (burn, char) samples the patch's own crop of the same map.
+  if (uIsPaper < 0.5 && uNatOn > 0.5 && rev < 0.001 && fv < 0.18) discard;
   if (rev < 0.999) {
-  pap *= 0.9 + 0.13 * fbm3(p * 0.03 + 7.0);
-  pap = mix(pap, pap * vec3(0.93, 0.85, 0.7), smoothstep(0.58, 0.85, fbm3(p * 0.018 + 3.0)) * 0.7);
-  pap *= 0.97 + 0.06 * vnoise(p * vec2(5.0, 1.3)) * detail + 0.03 * (vnoise(p * 1.7) - 0.5);
-  float sdA = abs(sdf);
-  float inkW = 0.07 + fw * 0.6;
-  float coastInk = 1.0 - smoothstep(inkW, inkW + fw * 1.4, sdA);
-  float rip = 0.0;
-  for (int k = 1; k <= 3; k++) { float off = float(k) * 0.8; rip += (1.0 - smoothstep(0.035 + fw * 0.4, 0.035 + fw * 1.8, abs(sdf - off))) * (1.0 - float(k) * 0.24); }
-  rip *= step(0.0, sdf);
-  float row = floor(p.y / 1.9);
-  float yy = p.y - row * 1.9 - 0.95;
-  float cur = 0.33 * sin(p.x * 1.7 + row * 2.3) + 0.12 * sin(p.x * 4.1 + row);
-  float wv = (1.0 - smoothstep(0.03 + fw * 0.4, 0.03 + fw * 1.8, abs(yy - cur))) * smoothstep(3.2, 5.0, sdf) * step(0.42, vnoise(vec2(p.x * 0.16, row * 0.71)));
-  wv *= 1.0 - smoothstep(0.25, 0.6, fw);
-  pap = mix(pap, pap * vec3(0.84, 0.9, 0.93), smoothstep(-0.1, 0.5, sdf) * 0.6);
-  pap = mix(pap, ${S('#4c5a62')}, clamp(rip * 0.42 + wv * 0.38, 0.0, 1.0));
-  pap = mix(pap, ${S('#2b2219')}, coastInk * 0.82);
-  vec4 ink = texture2D(uInk, uvH);
-  pap = mix(pap, ink.rgb, ink.a);
-  pap *= uPaperMul;
-  // the national ink map is the paper beyond (and fading into) this patch
-  if (uNatOn > 0.5) {
+  {
     vec2 nuv = (p - uNatRect.xy) / (uNatRect.zw - uNatRect.xy);
     vec2 ne = min(p - uNatBounds.xy, uNatBounds.zw - p);   // km inside the drawn map; plain paper beyond
     vec3 nat = mix(C_PAPER * uPaperMul * 0.97, texture2D(uNat, clamp(nuv, 0.0, 1.0)).rgb, smoothstep(0.0, 120.0, min(ne.x, ne.y)));
     nat *= 0.95 + 0.08 * fbm3(p * 0.012 + 7.0) + 0.03 * (vnoise(p * 1.7) - 0.5) * detail;
-    pap = mix(nat, pap, inR);
+    pap = nat;
   }
   float burn = smoothstep(0.18, 0.475, fv) * (1.0 - rev);
   pap = mix(pap, ${S('#7a4a22')}, burn * burn * 0.75);

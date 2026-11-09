@@ -45,8 +45,8 @@ function fogFade(mat, shared, body) {
     Object.assign(sh.uniforms, shared.uniforms);
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vRW;')
       .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvRW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>\n${GLSL_COMMON}\nvarying vec3 vRW;`)
-      .replace('#include <color_fragment>', `#include <color_fragment>\n${body}\n diffuseColor.a *= smoothstep(0.5, 0.62, fogField(vRW.xz));`);
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>\n${GLSL_COMMON}\nvarying vec3 vRW;\nuniform float uLandA;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>\n${body}\n diffuseColor.a *= smoothstep(0.5, 0.62, fogField(vRW.xz)) * uLandA;`);
   };
   return mat;
 }

@@ -5,7 +5,7 @@ let nat = null;
 self.onmessage = async (e) => {
   const m = e.data;
   if (m.type === 'init') {
-    nat = await loadNational(m.base, m.style, m.hubs);
+    nat = await loadNational(m.base, m.style, m.hubs, m.patches);
     self.postMessage({ type: 'ready', rect: nat.rect });
   } else if (m.type === 'draw') {
     const c = new OffscreenCanvas(m.w, m.h);

@@ -25,7 +25,7 @@ function texture(img) {
 }
 
 // { rect, paint(r, w, h) → Promise<THREE.Texture> }
-export async function createPainter(base, style, hubs = []) {
+export async function createPainter(base, style, hubs = [], patches = []) {
   if (typeof OffscreenCanvas !== 'undefined' && typeof Worker !== 'undefined' && new URLSearchParams(location.search).get('paperworker') !== '0') {
     try {
       const w = new Worker(new URL('./paperWorker.js', import.meta.url), { type: 'module' });
@@ -39,7 +39,7 @@ export async function createPainter(base, style, hubs = []) {
           if (m.type === 'ready') ready(m.rect);
           else if (m.type === 'tile') { waiting.get(m.id)(texture(m.bmp)); waiting.delete(m.id); }
         };
-        w.postMessage({ type: 'init', base: new URL(base, location.href).href, style, hubs });
+        w.postMessage({ type: 'init', base: new URL(base, location.href).href, style, hubs, patches });
       });
       return {
         rect, worker: true,
@@ -47,7 +47,7 @@ export async function createPainter(base, style, hubs = []) {
       };
     } catch (e) { console.warn('[paper] worker unavailable, drawing on the page', e); }
   }
-  const nat = await loadNational(base, style, hubs);
+  const nat = await loadNational(base, style, hubs, patches);
   return {
     rect: nat.rect, worker: false,
     paint(r, pw, ph) {

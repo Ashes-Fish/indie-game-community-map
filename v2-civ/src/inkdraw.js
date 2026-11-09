@@ -1,4 +1,4 @@
-// Ink-map drawing helpers shared by the patches' fog paper (parchment.js) and the national paper (natdraw.js, which
+// Ink-map drawing helpers shared by the national paper (natdraw.js, which
 // also runs in a worker): plain 2D-canvas code, no three.js.
 export const KAI = '"Kaiti SC","STKaiti","KaiTi","楷体","Songti SC","STSong",serif';
 
