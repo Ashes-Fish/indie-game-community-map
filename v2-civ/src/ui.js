@@ -1,5 +1,8 @@
 import * as THREE from 'three';
-import { parseContact } from './data.js';
+import { parseContact, HUB_CITIES } from './data.js';
+import { CN_CITIES } from './cn.js';
+import { toWorld } from './config.js';
+import NAT_PROVINCES from './data/nat-provinces.json';
 import { icon, FRAME, FRAME_S } from './icons.js';
 import { modelLabel, FEATURES } from './models.js';
 
@@ -103,6 +106,46 @@ export class UI {
     this.root.appendChild(this.toasts);
     this._v = new THREE.Vector3();
     this.regionD = 1100;
+    this.natLabels();
+  }
+
+  // 全国 labels in screen space: province names (country scale) and every prefecture seat (seal + name), at a constant size.
+  // Community cities show their seal only (their banners carry the name), and nothing where a banner is up.
+  natLabels() {
+    const hubSet = new Set(HUB_CITIES), first = this.root.firstChild;
+    this.provs = NAT_PROVINCES.map((p) => {
+      const el = h('div', 'pname', esc([...p.n].join(' ')));
+      el.style.display = 'none'; this.root.insertBefore(el, first);
+      const [x, z] = toWorld(p.lon, p.lat);
+      return { el, pos: new THREE.Vector3(x, 0, z), on: false };
+    });
+    this.seats = CN_CITIES.map((c) => {
+      const hub = hubSet.has(c.s), cap = !!c.cap;
+      const el = h('div', 'cseal' + (cap ? ' cap' : '') + (hub ? ' hub' : ''), '<i></i>' + (hub ? '' : '<span>' + esc(c.s) + '</span>'));
+      el.style.display = 'none'; this.root.insertBefore(el, first);
+      const [x, z] = toWorld(c.lon, c.lat);
+      return { el, c, hub, cap, pos: new THREE.Vector3(x, 0, z), on: false, banner: this.banners.find((b) => b.city.name === c.s) || null };
+    });
+  }
+  updateNatLabels(cam, dist, w, hh) {
+    const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    const pOp = ss(1300, 2200, dist);
+    for (const p of this.provs) {
+      const q = pOp > 0.02 ? this.project(p.pos, cam, w, hh) : null;
+      const vis = !!q && q.ok;
+      if (vis !== p.on) { p.on = vis; p.el.style.display = vis ? '' : 'none'; }
+      if (vis) { p.el.style.transform = 'translate(' + q.x + 'px,' + q.y + 'px) translate(-50%,-50%)'; p.el.style.opacity = pOp * 0.9; }
+    }
+    // prefecture seats appear below ~1800 km and thin out again very close (the 3D city carries the place by then)
+    const seatOp = 1 - ss(1400, 1800, dist), nearOp = ss(110, 260, dist);
+    for (const s of this.seats) {
+      let op = s.cap ? nearOp : seatOp * nearOp;
+      if (s.hub) op = dist < 650 || (s.banner && s.banner.el.style.display !== 'none') ? 0 : 1;
+      const q = op > 0.02 ? this.project(s.pos, cam, w, hh) : null;
+      const vis = !!q && q.ok;
+      if (vis !== s.on) { s.on = vis; s.el.style.display = vis ? '' : 'none'; }
+      if (vis) { s.el.style.transform = 'translate(' + q.x + 'px,' + q.y + 'px) translate(-4px,-50%)'; s.el.style.opacity = op; }
+    }
   }
 
   addLabel(text, x, y, z, cls = '') {
@@ -129,6 +172,7 @@ export class UI {
       b.el.style.display = p.ok && dist < this.regionD && inRegion ? '' : 'none';   // country view: the region banners stand in
       if (p.ok) b.el.style.transform = `translate(${p.x}px,${p.y}px) translate(-50%,-100%) scale(${sc})`;
     }
+    this.updateNatLabels(cam, dist, w, hh);
     const showTags = dist < 150;
     // dense cities reveal their tags only when zoomed further in, so names don't pile up
     const near = (t) => dist < (this.dense.has(t.s.cityId) ? 70 : 150);

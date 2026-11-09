@@ -9,7 +9,6 @@
 import { Z0 } from './albers.js';
 import { toWorld, hash2, rng } from './config.js';
 import { drawMountain, compass, KAI } from './inkdraw.js';
-import { CN_CITIES } from './cn.js';
 
 const mkCanvas = (w, h) => {
   if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
@@ -32,8 +31,6 @@ export const PAPER_STYLES = {
     seal: 'rgba(150,44,32,0.75)',
   },
 };
-// province name positions where the centroid lands on a neighbour or a capital
-const LABEL_AT = { 河北: [115.4, 38.3], 内蒙古: [112.5, 42.6], 甘肃: [100.8, 38.6], 北京: null, 天津: null, 上海: null, 香港: null, 澳门: null };
 
 // ---- tile resolution classes (pixels per km) ----
 // Sizes below are tile pixels; detail switches on with resolution. ppk ≈ 0.07 at the coarsest tile, 4.4 at the finest.
@@ -157,10 +154,6 @@ export async function loadNational(base, style, hubs = [], patches = []) {
   const provLand = withB(map.provinces.flatMap((p) => p.r.flatMap((r) => runs(r).land)));
   const cRuns = map.country.map(runs);
   const natLand = withB(cRuns.flatMap((r) => r.land)), natCoast = withB(cRuns.flatMap((r) => r.coast));
-  const provLabels = map.provinces.map((p) => ({ n: p.n, at: p.n in LABEL_AT ? LABEL_AT[p.n] : p.c })).filter((p) => p.at)
-    .map((p) => ({ n: p.n, xz: toWorld(p.at[0], p.at[1]) }));
-  const hubSet = new Set(hubs);
-  const seals = CN_CITIES.map((c) => ({ s: c.s, xz: toWorld(c.lon, c.lat), cap: c.cap, hub: hubSet.has(c.s) }));
   // age stains: big soft blobs on fixed national positions
   const SR = rng(20261109);
   const stains = Array.from({ length: 40 }, () => ({ x: RECT[0] + SR() * RW, z: RECT[1] + SR() * (RECT[3] - RECT[1]), r: (0.05 + SR() * 0.12) * RW }));
@@ -311,31 +304,8 @@ export async function loadNational(base, style, hubs = [], patches = []) {
     outsideFine(() => { g.strokeStyle = S.coast; g.lineWidth = 1.4; strokeList(natCoast); });
     g.strokeStyle = S.border[0]; g.lineWidth = 3.2; strokeList(natLand);
     g.strokeStyle = S.border[1]; g.lineWidth = 1.3; strokeList(natLand);
-    // province names (coarse tiles), city seals: capitals and community cities always, every prefecture seat when fine
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    if (s < 1.2) {
-      const fs = s < 0.2 ? 24 : 30, step = fs * 1.17;
-      g.font = `400 ${fs}px ${KAI}`; g.fillStyle = S.label;
-      for (const p of provLabels) {
-        const [px, py] = P(...p.xz), ch = [...p.n];
-        if (px < -200 || py < -60 || px > cw + 200 || py > chh + 60) continue;
-        ch.forEach((t, i) => g.fillText(t, px + (i - (ch.length - 1) / 2) * step, py));
-      }
-    }
-    g.textAlign = 'left';
-    const allSeats = s >= 0.5;
-    for (const c of seals) {
-      if (!c.cap && !c.hub && !allSeats) continue;
-      const [px, py] = P(...c.xz);
-      if (px < -120 || py < -30 || px > cw + 30 || py > chh + 30) continue;
-      const rr = c.hub ? 4.5 : c.cap ? 3.5 : 2.6;
-      g.fillStyle = S.seal; g.fillRect(px - rr, py - rr, 2 * rr, 2 * rr);
-      g.strokeStyle = `rgba(${S.mtn.ink},0.9)`; g.lineWidth = 0.9; g.strokeRect(px - rr * 1.5, py - rr * 1.5, rr * 3, rr * 3);
-      if (c.hub || c.cap || s >= 0.9) {
-        g.font = `400 ${c.hub ? 15 : c.cap ? 13 : 11}px ${KAI}`; g.fillStyle = `rgba(${S.mtn.ink},0.88)`;
-        g.fillText(c.s, px + rr * 2.2, py);
-      }
-    }
+    // province names and city seals + names are screen-space labels (ui.js): text drawn into tiles changes size from level
+    // to level, is cut at tile edges and is blown up when a coarse tile stands in during a fast zoom
     // painted names inside a patch, sized in km and fading in with the resolution
     if (s >= 1.2 && fineHere.length) {
       g.textBaseline = 'middle'; g.textAlign = 'center';

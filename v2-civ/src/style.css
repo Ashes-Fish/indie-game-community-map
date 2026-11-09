@@ -218,3 +218,14 @@
 .title .crumb span.cur{color:var(--gold2);cursor:default;border-bottom-color:transparent}
 .title .crumb i{font-style:normal;color:rgba(212,171,85,.6)}
 @media (max-width: 720px){ .title .crumb{font-size:10.5px;letter-spacing:.04em;margin-top:2px} .banner.hub .nm{font-size:13px} .banner.hub .bar{height:26px} }
+
+/* 全国 labels in screen space: province names, prefecture seals */
+.pname{position:absolute;left:0;top:0;pointer-events:none;white-space:nowrap;font:400 22px/1 "Kaiti SC","STKaiti","KaiTi","楷体","Songti SC","STSong",serif;letter-spacing:.35em;margin-right:-.35em;
+  color:rgba(66,44,26,.62);text-shadow:0 0 4px rgba(236,222,186,.9),0 0 8px rgba(236,222,186,.6)}
+.cseal{position:absolute;left:0;top:0;pointer-events:none;white-space:nowrap;display:flex;align-items:center;gap:5px}
+.cseal i{width:6px;height:6px;flex:none;background:rgba(176,58,46,.78);box-shadow:0 0 0 1px rgba(34,26,18,.85),0 0 0 2.5px rgba(236,222,186,.55)}
+.cseal.cap i{width:8px;height:8px}
+.cseal.hub i{width:9px;height:9px}
+.cseal span{font:400 12px/1 "Kaiti SC","STKaiti","KaiTi","楷体","Songti SC","STSong",serif;color:rgba(34,26,18,.9);text-shadow:0 0 3px rgba(236,222,186,.95),0 0 6px rgba(236,222,186,.7)}
+.cseal.cap span{font-size:14px}
+@media (max-width: 720px){ .pname{font-size:15px} .cseal span{font-size:10.5px} .cseal.cap span{font-size:12px} }
