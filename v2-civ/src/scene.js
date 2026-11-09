@@ -697,7 +697,8 @@ function frame() {
   const curRegion = cam.dist < REGION_D ? regionUnderCamera() : null;
   ui.update(camera, cam.dist, (c) => built.has(c.key), curRegion);
   updateCrumb(curRegion);
-  paper.update(camera, renderer.domElement.height);
+  const goalD = cam.fly ? cam.fly.to.d : cam.goalDist, goalT = cam.fly ? cam.fly.to : cam.target;
+  paper.update(camera, renderer.domElement.height, { x: goalT.x, z: goalT.z, dist: goalD, from: cam.dist });
   if (post) { post.update(cam.dist); post.render(); } else renderer.render(scene, camera);
   paper.step();   // draw one missing paper tile per frame
 }

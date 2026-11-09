@@ -7,13 +7,14 @@ import * as THREE from 'three';
 import { makeTerrainMaterial } from './terrain.js';
 
 const TILE_PX = 512, MAX_L = 6, Y = -0.3;
+const KEEP_L = 2;   // levels 0..KEEP_L are never evicted: a stand-in is at least this sharp, never the whole-country tile
 
 export class PaperTiles {
   constructor(painter, shared, mobile, renderer = null) {
     this.painter = painter; this.mobile = mobile; this.renderer = renderer;
     const [x0, z0, x1, z1] = painter.rect;
     this.x0 = x0; this.z0 = z0; this.W = x1 - x0; this.H = z1 - z0;
-    this.cap = mobile ? 28 : 56;                // tiles kept on the GPU
+    this.cap = mobile ? 36 : 80;                // tiles kept on the GPU
     this.cache = new Map();                     // 'L/i/j' → { tex, rect, used }
     this.wanted = new Map();                    // tiles to draw: key → [L, i, j, priority]
     this.pending = new Set();                   // tiles being drawn
@@ -55,26 +56,46 @@ export class PaperTiles {
     return m;
   }
   // choose tiles for this camera, show them (or their stand-ins), queue the missing ones
-  update(camera, viewH) {
+  // goal: where the camera is heading ({ x, z, dist, from } — the target point, the distance it is flying/zooming to and the
+  // current distance): the tiles that view will need are queued too (after the visible ones), so they are drawn by arrival
+  update(camera, viewH, goal = null) {
     this.frame++;
     camera.updateMatrixWorld();
     this._m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this._f.setFromProjectionMatrix(this._m);
-    const p = camera.position, k = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / Math.max(1, viewH);   // km per screen px per km of distance
-    const leaves = [];
+    const k = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / Math.max(1, viewH);   // km per screen px per km of distance
     const rows = (L) => Math.ceil(this.H / (this.W / 2 ** L));
-    const visit = (L, i, j) => {
-      const r = this.rect(L, i, j);
-      this._b.min.set(r[0], Y - 1, r[1]); this._b.max.set(r[2], Y + 1, r[3]);
-      if (!this._f.intersectsBox(this._b)) return;
-      const dx = Math.max(r[0] - p.x, 0, p.x - r[2]), dz = Math.max(r[1] - p.z, 0, p.z - r[3]);
-      const d = Math.hypot(dx, dz, p.y - Y);
-      const texel = (r[2] - r[0]) / TILE_PX;
-      if (L < MAX_L && texel > 1.3 * k * d) {
-        for (let b = 0; b < 2; b++) for (let a = 0; a < 2; a++) if (2 * j + b < rows(L + 1)) visit(L + 1, 2 * i + a, 2 * j + b);
-      } else leaves.push([L, i, j, d]);
+    const collect = (p, frustum) => {
+      const leaves = [];
+      const visit = (L, i, j) => {
+        const r = this.rect(L, i, j);
+        if (frustum) { this._b.min.set(r[0], Y - 1, r[1]); this._b.max.set(r[2], Y + 1, r[3]); if (!this._f.intersectsBox(this._b)) return; }
+        else if (r[0] > p.rx1 || r[2] < p.rx0 || r[1] > p.rz1 || r[3] < p.rz0) return;
+        const dx = Math.max(r[0] - p.x, 0, p.x - r[2]), dz = Math.max(r[1] - p.z, 0, p.z - r[3]);
+        const d = Math.hypot(dx, dz, p.y - Y);
+        const texel = (r[2] - r[0]) / TILE_PX;
+        if (L < MAX_L && texel > 1.3 * k * d) {
+          for (let b = 0; b < 2; b++) for (let a = 0; a < 2; a++) if (2 * j + b < rows(L + 1)) visit(L + 1, 2 * i + a, 2 * j + b);
+        } else leaves.push([L, i, j, d]);
+      };
+      for (let j = 0; j < rows(0); j++) visit(0, 0, j);
+      return leaves;
     };
-    for (let j = 0; j < rows(0); j++) visit(0, 0, j);
+    const leaves = collect(camera.position, true);
+    // the view at the goal: the same camera pulled along its line of sight to the goal distance, a box of the screen's
+    // footprint around the goal point (no frustum: the heading is only approximately known)
+    if (goal && goal.dist < goal.from * 0.9) {
+      const c = camera.position, f = goal.dist / goal.from;
+      const gp = { x: goal.x + (c.x - goal.x) * f, y: goal.dist * (c.y / Math.max(1, goal.from)), z: goal.z + (c.z - goal.z) * f };
+      const half = goal.dist * 0.9 * Math.max(1, camera.aspect || 1.6);
+      gp.rx0 = goal.x - half; gp.rx1 = goal.x + half; gp.rz0 = goal.z - half; gp.rz1 = goal.z + half;
+      gp.y = Math.max(gp.y, 1);
+      for (const [L, i, j, d] of collect(gp, false)) {
+        const key = this.key(L, i, j), t = this.cache.get(key);
+        if (t) t.used = this.frame;
+        else if (!this.wanted.has(key)) this.wanted.set(key, [L, i, j, L * 1e6 + 5e5 + d]);   // after anything visible at the same level
+      }
+    }
     leaves.forEach(([L, i, j, d], n) => {
       // the tile itself if drawn, else queue it and show the nearest drawn ancestor
       let t = this.cache.get(this.key(L, i, j));
@@ -98,14 +119,14 @@ export class PaperTiles {
   step() {
     const todo = [...this.wanted.entries()].filter(([k]) => !this.pending.has(k)).sort((a, b) => a[1][3] - b[1][3]);
     this.wanted.clear();   // re-collected by the next update()
-    const slots = (this.painter.worker ? 2 : 1) - this.pending.size;
+    const slots = (this.painter.worker ? (this.painter.workers || 1) + 1 : 1) - this.pending.size;
     for (const [, [L, i, j]] of todo.slice(0, Math.max(0, slots))) this.draw(L, i, j);
     return todo.length > 0;
   }
   // keep the GPU budget: drop the least recently used tiles (never the root)
   evict() {
     if (this.cache.size > this.cap) {
-      const old = [...this.cache.entries()].filter(([, t]) => t !== this.root).sort((a, b) => a[1].used - b[1].used);
+      const old = [...this.cache.entries()].filter(([kk, t]) => t !== this.root && +kk.split('/')[0] > KEEP_L).sort((a, b) => a[1].used - b[1].used);
       for (const [kk, t] of old.slice(0, this.cache.size - this.cap)) { if (t.used === this.frame) break; t.tex.dispose(); this.cache.delete(kk); }
     }
   }

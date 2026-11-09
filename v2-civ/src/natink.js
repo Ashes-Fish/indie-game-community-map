@@ -28,22 +28,30 @@ function texture(img) {
 export async function createPainter(base, style, hubs = [], patches = []) {
   if (typeof OffscreenCanvas !== 'undefined' && typeof Worker !== 'undefined' && new URLSearchParams(location.search).get('paperworker') !== '0') {
     try {
-      const w = new Worker(new URL('./paperWorker.js', import.meta.url), { type: 'module' });
+      // a pool: each worker draws one tile at a time, so a fast zoom (many new tiles at once) is not limited to one core
+      const N = Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 4) - 2));
       const waiting = new Map();
-      let id = 0, ready;
-      const rect = await new Promise((res, rej) => {
-        ready = res;
+      let id = 0;
+      const abs = new URL(base, location.href).href;
+      const pool = await Promise.all(Array.from({ length: N }, () => new Promise((res, rej) => {
+        const w = new Worker(new URL('./paperWorker.js', import.meta.url), { type: 'module' });
+        const slot = { w, busy: 0 };
         w.onerror = (e) => rej(e);
         w.onmessage = (e) => {
           const m = e.data;
-          if (m.type === 'ready') ready(m.rect);
-          else if (m.type === 'tile') { waiting.get(m.id)(texture(m.bmp)); waiting.delete(m.id); }
+          if (m.type === 'ready') res({ slot, rect: m.rect });
+          else if (m.type === 'tile') { slot.busy--; waiting.get(m.id)(texture(m.bmp)); waiting.delete(m.id); }
         };
-        w.postMessage({ type: 'init', base: new URL(base, location.href).href, style, hubs, patches });
-      });
+        w.postMessage({ type: 'init', base: abs, style, hubs, patches });
+      })));
+      const slots = pool.map((p) => p.slot);
       return {
-        rect, worker: true,
-        paint(r, pw, ph) { return new Promise((res) => { waiting.set(++id, res); w.postMessage({ type: 'draw', id, rect: r, w: pw, h: ph }); }); },
+        rect: pool[0].rect, worker: true, workers: N,
+        paint(r, pw, ph) {
+          const s = slots.reduce((a, b) => (b.busy < a.busy ? b : a));
+          s.busy++;
+          return new Promise((res) => { waiting.set(++id, res); s.w.postMessage({ type: 'draw', id, rect: r, w: pw, h: ph }); });
+        },
       };
     } catch (e) { console.warn('[paper] worker unavailable, drawing on the page', e); }
   }
