@@ -1,7 +1,20 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
+import { rmSync, readdirSync } from 'fs';
+
+// public/models/a_*.glb, b_*.glb are the P1 asset comparison (?asset=a|b, assets-src/README.md): served by the dev
+// server, left out of the published build (about 1 MB nobody downloads)
+const dropAssetComparison = {
+  name: 'drop-asset-comparison',
+  apply: 'build',
+  writeBundle(opts) {
+    const dir = resolve(opts.dir, 'models');
+    for (const f of readdirSync(dir)) if (/^[ab]_.*.glb$/.test(f)) rmSync(resolve(dir, f));
+  },
+};
 export default defineConfig({
   base: './',
+  plugins: [dropAssetComparison],
   server: { fs: { allow: [resolve(import.meta.dirname, '..')] }, port: 5181 },
   resolve: { dedupe: ['three'] },
   optimizeDeps: {

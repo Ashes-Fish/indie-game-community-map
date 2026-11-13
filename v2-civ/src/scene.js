@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import './style.css';
 import { World, loadImage } from './world.js';
 import { CITIES, COMMUNITIES, HUB_CITIES } from './data.js';
-import { PatchTerrain, loadTerrainTextures, makeRippleTexture, MAX_OWNERS } from './terrain.js';
+import { PatchTerrain, loadTerrainTextures, makeRippleTexture, makeTerrainMaterial, MAX_OWNERS } from './terrain.js';
 import { setRenderer } from './assets.js';
 import { CivCamera } from './camera.js';
 import { buildProps } from './props.js';
@@ -19,6 +19,7 @@ import { REGIONS, regionById, assignRegions, regionView } from './regions.js';
 import { dumpPins } from './layout.js';
 import PINS from './layout-pins.json';
 import { createPainter, paperMul, PAPER_STYLES } from './natink.js';
+import { fetchNationalData } from './natdraw.js';
 import { PaperTiles } from './paper.js';
 
 // One national world (docs/全国一张世界方案.md): the national ink map is the fog-of-war paper, each land patch (地块)
@@ -164,12 +165,19 @@ function startView() {
 
 async function init() {
   const postP = Q.post ? import('./post.js') : null;
+  // the land / paper shader (~120 k characters) links in the driver's background while the data downloads and decodes;
+  // left to its first draw it stalls that frame for seconds on some GPUs
+  const terrainReady = precompileTerrain();
   progress(0.1, '正在展开舆图…');
   const worlds = PATCHES.map((P) => new World(P));
-  const riversP = worlds.map((w) => fetch(`${BASE}data/patches/${w.id}/rivers.json`).then((r) => r.json()));
+  // the national and patch data are fetched once: the paper workers and the 3D patches decode the same bytes
+  const dataP = fetchNationalData(BASE, PATCHES);
   const [nat, lg, terrTex] = await Promise.all([
-    createPainter(BASE, PAPER, HUB_CITIES, PATCHES), loadLogos(), loadTerrainTextures(BASE + 'tex/terrain.webp'), ...worlds.map((w) => w.load(BASE)),
+    dataP.then((data) => createPainter(data, PAPER, HUB_CITIES, PATCHES)), loadLogos(), loadTerrainTextures(BASE + 'tex/terrain.webp'),
+    dataP.then((data) => Promise.all(worlds.map((w) => w.load(data.patches[w.id])))),
   ]);
+  const data = await dataP;
+  const rivers = worlds.map((w) => JSON.parse(new TextDecoder().decode(data.patches[w.id].rivers)));
   logos = lg;
   shared.uniforms.uTerr.value = terrTex;
   shared.uniforms.uRipple.value = makeRippleTexture();
@@ -198,7 +206,7 @@ async function init() {
     const terrain = new PatchTerrain(world, ps, Q.mobile);
     terrain.onBuild = precompileMesh;
     scene.add(terrain.group);
-    patches.push({ world, P: world.patch, cities, comms, sites: world.sites, rivers: await riversP[i], ps, terrain, mid: null, near: null, revealT: -0.25 * i, buildT: 0 });
+    patches.push({ world, P: world.patch, cities, comms, sites: world.sites, rivers: rivers[i], ps, terrain, mid: null, near: null, revealT: -0.25 * i, buildT: 0 });
     progress(0.5 + 0.3 * (i + 1) / worlds.length);
     await tick();
   }
@@ -230,10 +238,13 @@ async function init() {
     const { makePost } = await postP;
     post = makePost(renderer, scene, camera);
   }
-  // the first patch and every shader program it needs, behind the loading bar: the first frames after the loader
-  // lifts then have nothing left to compile
   progress(0.88, '正在营建城郭…');
-  await warmUp();
+  await terrainReady;
+  // A close start view (?view, ?open, ?region) builds its patch and every program it needs behind the loading bar.
+  // The country view needs none of that to show: the loader lifts at once, and 长三角 is warmed up in the background
+  // (scheduler) while the user looks at the map, before the first zoom-in.
+  const sv = startView();
+  if (sv.d < FAR_D) await warmUp(true);
   progress(0.95, '即将完成…');
   // window.__dbg.pins() prints the snapshot to commit as src/layout-pins.json after adding communities
   window.__dbg = { scene, cam, shared, paper, frame, buildLog, buildMid, buildNear, timed, renderer, camera, patches, COMMUNITIES, CITIES, select, focusCity, goRegion, REGIONS, perf, NAT_VIEW, pins: () => JSON.stringify(dumpPins(CITIES, COMMUNITIES), null, 2), get post() { return post; } };
@@ -241,20 +252,42 @@ async function init() {
   scheduler();
 }
 
-// the first patch, built behind the loader: the one at the start view, else 长三角 (it has every kind of object)
-async function warmUp() {
+// Build one patch's mid and near tiers and compile every program they and the street-level post chain need: the one a
+// close start view is on, else 长三角 (it has every kind of object, so its programs cover the other patches too).
+// Behind the loader for a close start view; in the background (scheduler) for the country view. warmed: done.
+let warmed = false;
+const WARM_DELAY_MS = 2500, STILL_MS = 1200;
+let lastInput = 0;
+for (const ev of ['pointerdown', 'pointermove', 'wheel', 'touchstart']) addEventListener(ev, () => { lastInput = performance.now(); }, { passive: true, capture: true });
+const mapIsStill = () => {
+  const now = performance.now();
+  return now - window.__readyAt > WARM_DELAY_MS && now - lastInput > STILL_MS && !cam.fly && Math.abs(cam.goalDist - cam.dist) < cam.dist * 0.01;
+};
+async function warmUp(behindLoader = false) {
+  warmed = true;
   const v = startView();
-  const pa = patches.find((p) => p.P === patchAt(v.x, v.z, -400)) || patches.find((p) => p.world.id === 'yrd') || patches[0];
+  const near = v.d < FAR_D && patches.find((p) => p.P === patchAt(v.x, v.z, -400));
+  const pa = near || patches.find((p) => p.world.id === 'yrd') || patches[0];
   if (!pa) return;
-  await buildMid(pa);
-  await buildNear(pa);
-  // the shadow-depth variants and the close-up post passes (screen-space AO) compile on first use: render the
-  // patch once from street level into an offscreen target, with the user's camera untouched
-  const saved = { x: cam.target.x, z: cam.target.z, d: cam.dist, fly: cam.fly };
+  if (!pa.mid) await buildMid(pa);
+  if (!pa.near) await buildNear(pa);
+  // the street-level render below resizes the canvas: in the background it runs at the start of a frame, which then
+  // draws the canvas again before it is shown
+  if (behindLoader) warmRender(pa, true);
+  else await new Promise((res) => { warmQueue = () => { warmRender(pa, false); res(); }; });
+}
+let warmQueue = null;
+// the shadow-depth variants and the close-up post passes (screen-space AO) compile on first use: render the
+// patch once from street level, with the user's camera put back afterwards
+function warmRender(pa, behindLoader) {
+  const saved = { x: cam.target.x, z: cam.target.z, d: cam.dist, goal: cam.goalDist, fly: cam.fly };
   const city = pa.cities[0];
   cam.fly = null; cam.target.set(city.x, 0, city.z + 4); cam.dist = cam.goalDist = 60; cam.apply();
-  pa.revealT = T_REVEAL; pa.buildT = 0;
-  for (const pp of patches) { pp.terrain.update(camera, false, performance.now() + 2000); if (pp.mid) pp.mid.visible = true; if (pp.near) pp.near.visible = true; }
+  if (behindLoader) { pa.revealT = T_REVEAL; pa.buildT = 0; }   // starting on this patch: no reveal animation
+  // fine terrain chunks around the city: all of them behind the loader; in the background only the nearest one (it is
+  // enough to compile the chunk programs and shadow variants), the rest are built a few per frame as usual
+  const budget = behindLoader ? 2000 : 1;
+  for (const pp of patches) { pp.terrain.update(camera, false, performance.now() + budget); if (pp.mid) pp.mid.visible = true; if (pp.near) pp.near.visible = true; }
   renderer.shadowMap.needsUpdate = true;
   const t0 = performance.now();
   // the post chain at street level (screen-space AO on, bloom, tilt-shift, SMAA) compiles its programs on this call;
@@ -262,9 +295,10 @@ async function warmUp() {
   if (post) { renderer.setSize(1, 1, false); post.setSize(1, 1); post.update(cam.dist); post.render(); renderer.setSize(innerWidth, innerHeight); post.setSize(innerWidth, innerHeight); }
   else { const rt = new THREE.WebGLRenderTarget(4, 4); renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.setRenderTarget(null); rt.dispose(); }
   buildLog.push(['warm-render', +(performance.now() - t0).toFixed(1)]);
-  cam.fly = saved.fly; cam.target.set(saved.x, 0, saved.z); cam.dist = cam.goalDist = saved.d; cam.apply();
+  cam.fly = saved.fly; cam.target.set(saved.x, 0, saved.z); cam.dist = saved.d; cam.goalDist = saved.goal; cam.apply();
   farOn = null;
-  growDistricts(pa);
+  for (const pp of patches) pp.terrain.update(camera, cam.dist > FAR_D, 0);   // back to the user's view
+  if (behindLoader) growDistricts(pa);
 }
 
 // ---------- detail levels (M2) ----------
@@ -289,6 +323,10 @@ function nextBuild() {
 async function scheduler() {
   for (;;) {
     const job = nextBuild();
+    // nothing the camera needs: warm up 长三角 (country view start), so the first zoom-in has nothing left to compile.
+    // Its shader links and texture uploads stall a few frames, so only while the map is still: not in the first seconds
+    // after the loader lifts (it is still fading out) and not while the user is dragging, zooming or flying.
+    if (!job && !warmed && mapIsStill()) { await warmUp(); farOn = null; await tick(); continue; }
     if (!job) { await new Promise((r) => setTimeout(r, 150)); continue; }
     const [pa, tier] = job;
     if (tier === 'mid') await buildMid(pa); else await buildNear(pa);
@@ -384,6 +422,11 @@ function compileShadow(o) {
   const p = compileAs(o, true);
   o.material = m; scene.fog = fog;
   return p;
+}
+// the one program behind every land patch and paper tile (they share the terrain material's source and defines)
+function precompileTerrain() {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), makeTerrainMaterial(shared, Q.mobile));
+  return compileAs(m, Q.post);
 }
 // a mesh built outside the tier groups (terrain detail levels): compile its programs on creation, not on first draw
 function precompileMesh(o) {
@@ -657,6 +700,7 @@ function frame() {
   const raw = (now - last) / 1000;
   const dt = Math.min(0.05, raw); last = now;
   adaptResolution(raw);
+  if (warmQueue) { const w = warmQueue; warmQueue = null; w(); }
   // a tab opened in the background can start at 0 × 0 and miss the resize event
   if (renderer.domElement.width !== Math.floor(innerWidth * renderer.getPixelRatio()) && innerWidth > 0) onResize();
   const U = shared.uniforms;

@@ -24,15 +24,14 @@ function texture(img) {
   return t;
 }
 
-// { rect, paint(r, w, h) → Promise<THREE.Texture> }
-export async function createPainter(base, style, hubs = [], patches = []) {
+// { rect, paint(r, w, h) → Promise<THREE.Texture> }; data: natdraw.js fetchNationalData (the page fetches it once)
+export async function createPainter(data, style, hubs = [], patches = []) {
   if (typeof OffscreenCanvas !== 'undefined' && typeof Worker !== 'undefined' && new URLSearchParams(location.search).get('paperworker') !== '0') {
     try {
       // a pool: each worker draws one tile at a time, so a fast zoom (many new tiles at once) is not limited to one core
       const N = Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 4) - 2));
       const waiting = new Map();
       let id = 0;
-      const abs = new URL(base, location.href).href;
       const pool = await Promise.all(Array.from({ length: N }, () => new Promise((res, rej) => {
         const w = new Worker(new URL('./paperWorker.js', import.meta.url), { type: 'module' });
         const slot = { w, busy: 0 };
@@ -42,7 +41,7 @@ export async function createPainter(base, style, hubs = [], patches = []) {
           if (m.type === 'ready') res({ slot, rect: m.rect });
           else if (m.type === 'tile') { slot.busy--; waiting.get(m.id)(texture(m.bmp)); waiting.delete(m.id); }
         };
-        w.postMessage({ type: 'init', base: abs, style, hubs, patches });
+        w.postMessage({ type: 'init', data, style, hubs, patches });   // copied, not transferred: every worker needs it
       })));
       const slots = pool.map((p) => p.slot);
       return {
@@ -55,7 +54,7 @@ export async function createPainter(base, style, hubs = [], patches = []) {
       };
     } catch (e) { console.warn('[paper] worker unavailable, drawing on the page', e); }
   }
-  const nat = await loadNational(base, style, hubs, patches);
+  const nat = await loadNational(data, style, hubs, patches);
   return {
     rect: nat.rect, worker: false,
     paint(r, pw, ph) {

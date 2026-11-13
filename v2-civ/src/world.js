@@ -9,8 +9,9 @@ export function loadImage(url) {
   return new Promise((res, rej) => { const img = new Image(); img.onload = () => res(img); img.onerror = rej; img.src = url; });
 }
 
-async function loadPixels(url) {
-  const img = await loadImage(url);
+// PNG bytes (natdraw.js fetchNationalData) → RGBA pixels, values as stored (no colour or alpha conversion)
+async function loadPixels(bytes) {
+  const img = await createImageBitmap(new Blob([bytes], { type: 'image/png' }), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
   const c = document.createElement('canvas');
   c.width = img.width; c.height = img.height;
   const g = c.getContext('2d', { willReadFrequently: true });
@@ -53,9 +54,9 @@ export class World {
   }
   contains(x, z, margin = 0) { return x > this.x0 + margin && x < this.x1 - margin && z > this.z0 + margin && z < this.z1 - margin; }
 
-  async load(base) {
-    const dir = `${base}data/patches/${this.id}/`;
-    const [hp, wp] = await Promise.all([loadPixels(dir + 'height.png'), loadPixels(dir + 'water.png')]);
+  // bytes: this patch's { height, water } PNGs as fetched once for the page and the paper workers
+  async load(bytes) {
+    const [hp, wp] = await Promise.all([loadPixels(bytes.height), loadPixels(bytes.water)]);
     const { HW, HH, WW, WH, hmax } = this;
     this.Hm = new Float32Array(HW * HH);
     this.Y = new Float32Array(HW * HH);

@@ -45,16 +45,29 @@ function bboxOf(pts) {
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const hits = (b, r, m = 0) => b[0] <= r[2] + m && b[2] >= r[0] - m && b[1] <= r[3] + m && b[3] >= r[1] - m;
 
+// Every file the painter reads, fetched once on the page: the raw bytes go to each paper worker (structured clone of
+// ArrayBuffers, no second download or decode on the network side). { map, relief, elev, patches: { id: { height, water, rivers } } }
+export async function fetchNationalData(base, patches = []) {
+  const buf = (u) => fetch(base + u).then((r) => { if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`); return r.arrayBuffer(); });
+  const [map, relief, elev, ...fine] = await Promise.all([
+    buf('data/china/map.json'), buf('data/china/relief.json'), buf('data/china/elev.png'),
+    ...patches.map((P) => Promise.all(['height.png', 'water.png', 'rivers.json'].map((f) => buf(`data/patches/${P.id}/${f}`)))),
+  ]);
+  return { map, relief, elev, patches: Object.fromEntries(patches.map((P, i) => [P.id, { height: fine[i][0], water: fine[i][1], rivers: fine[i][2] }])) };
+}
+const jsonOf = (b) => JSON.parse(new TextDecoder().decode(b));
+const bitmapOf = (b, opts) => createImageBitmap(new Blob([b], { type: 'image/png' }), opts);
+
 // A land patch's fine data: height / water grids (bilinear), thin rivers, lowland level for the hill thresholds.
-async function loadFine(base, P) {
-  const get = (f) => fetch(base + 'data/patches/' + P.id + '/' + f);
-  const px = async (f) => {
-    const bmp = await createImageBitmap(await get(f).then((r) => r.blob()), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+async function loadFine(D, P) {
+  const px = async (b) => {
+    const bmp = await bitmapOf(b, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
     const c = mkCanvas(bmp.width, bmp.height), g = c.getContext('2d', { willReadFrequently: true });
     g.drawImage(bmp, 0, 0);
     return { d: g.getImageData(0, 0, bmp.width, bmp.height).data, w: bmp.width, h: bmp.height };
   };
-  const [h, w, rv] = await Promise.all([px('height.png'), px('water.png'), get('rivers.json').then((r) => r.json())]);
+  const [h, w] = await Promise.all([px(D.height), px(D.water)]);
+  const rv = jsonOf(D.rivers);
   const [x0, z0, x1, z1] = P.rect;
   const HM = new Float32Array(h.w * h.h), SD = new Float32Array(w.w * w.h), SE = new Float32Array(w.w * w.h);
   for (let i = 0; i < HM.length; i++) { const v = h.d[i * 4] / 255; HM[i] = P.hmax * v * v; }
@@ -94,14 +107,11 @@ const FINE_LABELS = {
   ],
 };
 
-// Load the national data once; returns { rect, draw(ctx, rect, w, h) } (draw paints rect [x0, z0, x1, z1] km into w × h px).
-export async function loadNational(base, style, hubs = [], patches = []) {
+// Build the painter from fetchNationalData's bytes; returns { rect, draw(ctx, rect, w, h) } (draw paints rect
+// [x0, z0, x1, z1] km into w × h px).
+export async function loadNational(data, style, hubs = [], patches = []) {
   const S = PAPER_STYLES[style] || PAPER_STYLES.qinglv;
-  const [map, rj, elevImg] = await Promise.all([
-    fetch(base + 'data/china/map.json').then((r) => r.json()),
-    fetch(base + 'data/china/relief.json').then((r) => r.json()),
-    fetch(base + 'data/china/elev.png').then((r) => r.blob()).then((b) => createImageBitmap(b)),
-  ]);
+  const map = jsonOf(data.map), rj = jsonOf(data.relief), elevImg = await bitmapOf(data.elev);
   // elevation lookup (metres, 0 = sea, -1 = beyond the data) and "inside China"
   const ec = mkCanvas(elevImg.width, elevImg.height);
   const eg = ec.getContext('2d', { willReadFrequently: true }); eg.drawImage(elevImg, 0, 0);
@@ -114,7 +124,7 @@ export async function loadNational(base, style, hubs = [], patches = []) {
   const elev = (x, z) => { const k = cell(x, z); if (k < 0) return -1; const v = ED[k] / 255; return ED[k] ? v * v * 6000 : 0; };
   const inCN = (x, z) => { const k = cell(x, z); return k >= 0 && ED[k + 1] > 127; };
   // beyond the elevation grid: the South China Sea and the Pacific are open sea, the far west plain paper
-  const fine = await Promise.all(patches.map((P) => loadFine(base, P)));
+  const fine = await Promise.all(patches.map((P) => loadFine(data.patches[P.id], P)));
   const finePatch = (x, z) => { for (const F of fine) if (x > F.x0 + 8 && x < F.x1 - 8 && z > F.z0 + 8 && z < F.z1 - 8) return F; return null; };
   const isSea = (x, z) => {
     const F = finePatch(x, z);
