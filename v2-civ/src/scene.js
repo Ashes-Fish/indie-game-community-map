@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import './style.css';
+// style.css is imported by main.js (shared with the flat fallback, lite.js)
 import { World, loadImage } from './world.js';
 import { CITIES, COMMUNITIES, HUB_CITIES } from './data.js';
 import { PatchTerrain, loadTerrainTextures, makeRippleTexture, makeTerrainMaterial, MAX_OWNERS } from './terrain.js';
@@ -21,6 +21,7 @@ import PINS from './layout-pins.json';
 import { createPainter, paperMul, PAPER_STYLES } from './natink.js';
 import { fetchNationalData } from './natdraw.js';
 import { PaperTiles } from './paper.js';
+import { pickTier, rememberTier, TIERS, lower, gpuName } from './tiers.js';
 
 // One national world (docs/全国一张世界方案.md): the national ink map is the fog-of-war paper, each land patch (地块)
 // rises out of it in 3D, one camera from the whole country down to a street. 长三角 keeps its hand-made extras
@@ -31,10 +32,17 @@ const PAPER = PAPER_STYLES[qs.get('paper')] ? qs.get('paper') : 'qinglv';
 document.title = '中国独立游戏社团地图';
 document.querySelector('#loader .sub').textContent = '全国';
 const coarse = matchMedia('(pointer: coarse)').matches;
-const mobile = qs.get('q') === 'low' || (qs.get('q') !== 'high' && (coarse || innerWidth < 720) && Math.min(innerWidth, innerHeight) < 900);
-const Q = mobile
-  ? { mobile: true, dpr: Math.min(devicePixelRatio, 2), post: false, shadow: 1024, trees: 0.5, paperPerKm: 1.1 }
-  : { mobile: false, dpr: Math.min(devicePixelRatio, 1.5), post: true, shadow: 2048, trees: 1, paperPerKm: 2.2 };
+// mobile: the touch layout (camera framing, panel, labels). The rendering cost is the device tier's (tiers.js).
+const mobile = (coarse || innerWidth < 720) && Math.min(innerWidth, innerHeight) < 900;
+const TIER = pickTier(qs);
+const T = TIERS[TIER.tier];
+const Q = {
+  mobile, tier: TIER.tier, tierWhy: TIER.why,
+  dpr: Math.min(devicePixelRatio, T.dpr), post: T.post, shadow: T.shadow, trees: T.trees, life: T.life,
+  paperPerKm: T.paperPerKm, paperCache: T.paperCache, cropCap: T.cropCap, idleFps: T.idleFps,
+  lite: TIER.tier !== 'high',   // cheaper terrain shader branches (no caustics, simpler water)
+};
+document.documentElement.dataset.tier = Q.tier;
 const FAR_D = 1500;        // country scale beyond this camera distance: paper and whole-patch terrain only
 const LAND_IN = 900;       // ...and the land's own content (buildings, roads, rivers, shadows) is fully there below this: a band, not a switch
 const landK = (d) => 1 - THREE.MathUtils.smoothstep(d, LAND_IN, FAR_D);
@@ -50,7 +58,7 @@ renderer.setPixelRatio(Q.dpr);
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = Q.shadow > 0;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.shadowMap.autoUpdate = false;   // frame() decides when the shadow map is redrawn (needsUpdate)
 setRenderer(renderer);
@@ -84,8 +92,8 @@ scene.environmentIntensity = 0.4;
 
 const SUN_DIR = new THREE.Vector3(-0.55, 0.72, 0.42).normalize();
 const sun = new THREE.DirectionalLight(0xffeccc, 3.1);
-sun.castShadow = true;
-sun.shadow.mapSize.set(Q.shadow, Q.shadow);
+sun.castShadow = Q.shadow > 0;
+sun.shadow.mapSize.set(Q.shadow || 512, Q.shadow || 512);
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.04;
 scene.add(sun, sun.target);
 scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x7d6c48, 0.85));
@@ -184,7 +192,7 @@ async function init() {
   shared.uniforms.uRipple.value = makeRippleTexture();
   shared.uniforms.uNatBounds.value.set(...nat.rect);
   painter = nat;
-  paper = new PaperTiles(nat, shared, Q.mobile, renderer);
+  paper = new PaperTiles(nat, shared, Q.lite, renderer, Q.paperCache);
   await paper.init();
   scene.add(paper.group);
   shared.uniforms.uNat.value = paper.root.tex; shared.uniforms.uNatRect.value.copy(paper.root.rect);
@@ -204,7 +212,7 @@ async function init() {
     // the national paper this patch fades into at its edges: the coarsest tile until its own crop is drawn (buildMid)
     world.uniforms.uNat = { value: paper.root.tex }; world.uniforms.uNatRect = { value: paper.root.rect.clone() };
     const ps = world.shared(shared);
-    const terrain = new PatchTerrain(world, ps, Q.mobile);
+    const terrain = new PatchTerrain(world, ps, Q.lite, mobile);
     terrain.onBuild = precompileMesh;
     // the fine chunks cast shadows with the terrain depth shader: start linking it now (all patches share its program);
     // warmRender then draws it once, which is what finishes it on some drivers
@@ -251,7 +259,7 @@ async function init() {
   if (sv.d < FAR_D) await warmUp(true);
   progress(0.95, '即将完成…');
   // window.__dbg.pins() prints the snapshot to commit as src/layout-pins.json after adding communities
-  window.__dbg = { scene, cam, shared, paper, frame, buildLog, buildMid, buildNear, timed, renderer, camera, patches, COMMUNITIES, CITIES, select, focusCity, goRegion, REGIONS, perf, stats, NAT_VIEW, pins: () => JSON.stringify(dumpPins(CITIES, COMMUNITIES), null, 2), get post() { return post; } };
+  window.__dbg = { scene, cam, shared, paper, frame, buildLog, buildMid, buildNear, timed, renderer, camera, patches, COMMUNITIES, CITIES, select, focusCity, goRegion, REGIONS, perf, stats, Q, NAT_VIEW, pins: () => JSON.stringify(dumpPins(CITIES, COMMUNITIES), null, 2), get post() { return post; } };
   start();
   scheduler();
 }
@@ -302,7 +310,9 @@ function warmRender(pa, behindLoader) {
   // the post chain at street level (screen-space AO on, bloom, tilt-shift, SMAA) compiles its programs on this call;
   // one frame at 1 × 1 pixel costs nothing but the compiles
   if (post) { renderer.setSize(1, 1, false); post.setSize(1, 1); post.update(cam.dist); post.render(); renderer.setSize(innerWidth, innerHeight); post.setSize(innerWidth, innerHeight); }
-  else { const rt = new THREE.WebGLRenderTarget(4, 4); renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.setRenderTarget(null); rt.dispose(); }
+  // no post chain: the frame goes straight to the canvas (tone mapping and colour space are part of the program key
+  // there), so the warm frame does too, at 1 × 1 pixel
+  else { renderer.setSize(1, 1, false); renderer.render(scene, camera); renderer.setSize(innerWidth, innerHeight); }
   buildLog.push(['warm-render', +(performance.now() - t0).toFixed(1)]);
   sun.position.copy(sunWas[0]); sun.target.position.copy(sunWas[1]);
   [sc.left, sc.right, sc.top, sc.bottom] = scWas; sc.updateProjectionMatrix();
@@ -352,7 +362,7 @@ async function buildMid(pa) {
   const { world, ps, cities, comms, sites, rivers } = pa;
   const yrd = world.id === 'yrd';
   // a sharp crop of the national paper for the patch's edges (about the resolution of the paper tiles around it)
-  const r = [world.x0, world.z0, world.x1, world.z1], cap = Q.mobile ? 1024 : 2048, k = Math.min(Q.paperPerKm, cap / Math.max(r[2] - r[0], r[3] - r[1]));
+  const r = [world.x0, world.z0, world.x1, world.z1], cap = Q.cropCap, k = Math.min(Q.paperPerKm, cap / Math.max(r[2] - r[0], r[3] - r[1]));
   world.uniforms.uNat.value = await painter.paint(r, Math.round((r[2] - r[0]) * k), Math.round((r[3] - r[1]) * k));
   world.uniforms.uNatRect.value.set(...r);
   timed(world.id + ' nat-upload', () => renderer.initTexture(world.uniforms.uNat.value));
@@ -451,7 +461,7 @@ function compileShadow(o) {
 }
 // the one program behind every land patch and paper tile (they share the terrain material's source and defines)
 function precompileTerrain() {
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), makeTerrainMaterial(shared, Q.mobile));
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), makeTerrainMaterial(shared, Q.lite));
   return compileAs(m, Q.post);
 }
 function precompileTerrainShadow(terrain) {
@@ -529,7 +539,7 @@ async function buildNear(pa) {
   buildLog.push([world.id + ' props', +(performance.now() - t0).toFixed(1)]);
   // life: chimney smoke over villages and city lanes, walkers and ox carts on the roads, birds over lakes and towns
   const R = (k) => ((Math.sin(k * 91.7) * 43758.5) % 1 + 1) % 1;
-  const emit = pa.props.houses.filter((h, i) => R(i) < (Q.mobile ? 0.12 : 0.22)).map((h, i) => ({ x: h.x + 0.2 * h.s, y: h.y + 0.62 * h.s * (h.sy || 1), z: h.z, ph: R(i + 0.5) }));
+  const emit = pa.props.houses.filter((h, i) => R(i) < 0.22 * Q.life).map((h, i) => ({ x: h.x + 0.2 * h.s, y: h.y + 0.62 * h.s * (h.sy || 1), z: h.z, ph: R(i + 0.5) }));
   for (const c of cities) for (let k = 0; k < 3; k++) emit.push({ x: c.x + (R(k + c.x) - 0.5) * 4, y: c.y + 0.6, z: c.z + (R(k * 3 + c.z) - 0.5) * 4, ph: R(k + 7) });
   pa.smoke = buildSmoke(emit, ps, Q);
   pa.walkers = timed(world.id + ' walkers', () => buildWalkers(world, pa.roads.userData.paths, Q));
@@ -684,6 +694,7 @@ function replay() {
 
 function start() {
   window.__readyAt = performance.now();
+  if (TIER.why === 'guess') rememberTier(Q.tier);
   document.getElementById('loader').classList.add('done');
   const ld = document.getElementById('loader');
   ld.style.pointerEvents = 'none';
@@ -711,8 +722,11 @@ function start() {
   }
 }
 
-// adaptive resolution: if the GPU can't hold ~55 fps, drop the render pixel ratio a notch (never back up, no flicker)
-const perf = { t: 0, n: 0, dpr: Q.dpr, since: 0 };
+// Adaptive quality: if the GPU can't hold ~52 fps while the map is moving, first drop the render pixel ratio a notch
+// (never back up, no flicker); at the tier's floor and still below 30 fps (phone) / 20 fps (desktop) over three 2 s
+// windows, the device belongs a tier lower. What
+// can change live does (post chain off, shadows off); the tier is remembered, so the next visit starts there.
+const perf = { t: 0, n: 0, dpr: Q.dpr, since: 0, slow: 0, tier: Q.tier };
 function adaptResolution(raw) {
   perf.since += raw;
   if (perf.since < 4 || raw > 0.5) return;   // skip start-up shader compiles and tab switches
@@ -720,10 +734,30 @@ function adaptResolution(raw) {
   if (perf.t < 2) return;
   const fps = perf.n / perf.t;
   perf.t = perf.n = 0;
-  if (fps < 52 && perf.dpr > 1) {
-    perf.dpr = Math.max(1, perf.dpr - 0.25);
+  // resolution first; below 1 × only on the low and mid tiers (the terrain shader is paid per pixel: at 长三角 half the
+  // pixels cost well under half the frame), the HTML labels and panels stay sharp either way
+  const minDpr = TIERS[perf.tier].minDpr;
+  if (fps < 52 && perf.dpr > minDpr + 1e-3) {
+    perf.dpr = Math.max(minDpr, perf.dpr - 0.25);
     renderer.setPixelRatio(perf.dpr);
     if (post) post.setPixelRatio(perf.dpr);
+    return;
+  }
+  // a whole tier down only when the map is barely usable: under 30 fps on a phone, under 20 on a desktop (an integrated
+  // GPU runs the high tier at 25–35 fps while panning 长三角, and its owner would rather keep the look)
+  // frames while something is being built, rising or painted say nothing about the steady frame rate (a desktop was
+  // stepped down by the background build of 长三角 a few seconds after load): they only count towards resolution
+  const why = busyReason();
+  const steady = !(why === 'build' || why === 'reveal' || why === 'grow' || why === 'paper');
+  perf.slow = steady && fps < (mobile ? 30 : 20) ? perf.slow + 1 : steady ? 0 : perf.slow;
+  if (perf.slow >= 3 && perf.tier !== 'low' && TIER.why !== 'url') {
+    perf.slow = 0;
+    perf.tier = lower(perf.tier);
+    rememberTier(perf.tier);
+    const t = TIERS[perf.tier];
+    if (post && !t.post) { post = null; }   // the composer stays allocated; frame() renders plainly from now on
+    if (!t.shadow && renderer.shadowMap.enabled) { renderer.shadowMap.enabled = false; sun.castShadow = false; }
+    console.info(`[tier] ${Q.tier} → ${perf.tier} (${fps.toFixed(0)} fps)`);
   }
 }
 
@@ -731,7 +765,7 @@ function adaptResolution(raw) {
 // seconds it is drawn at IDLE_FPS instead of the display rate: on a still map that is most of the GPU (and the
 // battery and heat on a phone). Any input, camera motion, build, reveal or panel animation brings full rate back.
 // Animation time still advances by the real elapsed time, so the slower frames only look less smooth, not slower.
-const IDLE_AFTER = 2, IDLE_FPS = Q.mobile ? 15 : 30;
+const IDLE_AFTER = 2, IDLE_FPS = Q.idleFps;
 let busyUntil = 0, lastDrawn = 0, building = false;
 const wake = (s = IDLE_AFTER) => { busyUntil = Math.max(busyUntil, performance.now() + s * 1000); };
 for (const ev of ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchstart']) addEventListener(ev, () => wake(), { passive: true, capture: true });

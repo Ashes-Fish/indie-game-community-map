@@ -10,11 +10,11 @@ const TILE_PX = 512, MAX_L = 6, Y = -0.3;
 const KEEP_L = 2;   // levels 0..KEEP_L are never evicted: a stand-in is at least this sharp, never the whole-country tile
 
 export class PaperTiles {
-  constructor(painter, shared, mobile, renderer = null) {
+  constructor(painter, shared, mobile, renderer = null, cap = null) {
     this.painter = painter; this.mobile = mobile; this.renderer = renderer;
     const [x0, z0, x1, z1] = painter.rect;
     this.x0 = x0; this.z0 = z0; this.W = x1 - x0; this.H = z1 - z0;
-    this.cap = mobile ? 36 : 80;                // tiles kept on the GPU
+    this.cap = cap || (mobile ? 36 : 80);       // tiles kept on the GPU
     this.cache = new Map();                     // 'L/i/j' → { tex, rect, used }
     this.wanted = new Map();                    // tiles to draw: key → [L, i, j, priority]
     this.pending = new Set();                   // tiles being drawn

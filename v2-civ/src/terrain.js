@@ -477,14 +477,15 @@ function gridGeometry(world, x0, z0, x1, z1, step, skirt = 0) {
 // (within update's time budget, nearest first); until then a chunk shows the nearest level it has. The coarsest level casts no shadows.
 export const CHUNK_KM = 128;
 export class PatchTerrain {
-  constructor(world, shared, mobile) {
+  // lite: the cheaper terrain shader (tier below high); coarse: coarser grids (touch layout / small screens)
+  constructor(world, shared, lite, coarse = lite) {
     this.world = world;
-    this.material = makeTerrainMaterial(shared, mobile);
+    this.material = makeTerrainMaterial(shared, lite);
     this.depth = makeTerrainDepthMaterial(shared);
-    this.steps = mobile ? [1.5, 3, 6] : [1, 2, 4];
+    this.steps = coarse ? [1.5, 3, 6] : [1, 2, 4];
     this.near = [170, 520];     // camera distance (km) below which a chunk uses level 0 / level 1
     this.group = new THREE.Group();
-    this.whole = this.mesh(gridGeometry(world, world.x0, world.z0, world.x1, world.z1, mobile ? 8 : 6));
+    this.whole = this.mesh(gridGeometry(world, world.x0, world.z0, world.x1, world.z1, coarse ? 8 : 6));
     this.whole.castShadow = false;
     this.group.add(this.whole);
     this.chunks = [];

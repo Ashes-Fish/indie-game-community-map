@@ -8,7 +8,7 @@ import { rng } from './config.js';
 
 // ---------- chimney smoke: one Points draw, particles animated entirely in the vertex shader ----------
 export function buildSmoke(emitters, shared, Q) {
-  const per = Q.mobile ? 4 : 6;
+  const per = Math.max(2, Math.round(6 * Q.life));
   const n = emitters.length * per;
   const E = new Float32Array(n * 4), K = new Float32Array(n);
   emitters.forEach((e, i) => { for (let k = 0; k < per; k++) { E.set([e.x, e.y, e.z, e.ph], (i * per + k) * 4); K[i * per + k] = k / per; } });
@@ -66,9 +66,9 @@ function birdGeo() {
 
 export function buildBirds(world, centers, shared, Q) {
   const R = rng(99);
-  const flocks = centers.slice(0, Q.mobile ? 3 : 6).map((c, i) => ({
+  const flocks = centers.slice(0, Math.max(2, Math.round(6 * Q.life))).map((c, i) => ({
     cx: c.x, cz: c.z, r: 9 + R() * 12, w: (0.06 + R() * 0.04) * (i % 2 ? 1 : -1), a0: R() * 6.28,
-    y: world.heightY(c.x, c.z) + 6 + R() * 3, n: Q.mobile ? 5 : 5 + ((R() * 4) | 0),
+    y: world.heightY(c.x, c.z) + 6 + R() * 3, n: Q.life < 1 ? 5 : 5 + ((R() * 4) | 0),
   }));
   const total = flocks.reduce((s, f) => s + f.n, 0);
   const geo = birdGeo();
@@ -146,7 +146,7 @@ export function buildWalkers(world, paths, Q) {
     for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z));
     const len = cum[cum.length - 1];
     if (len < 4) continue;
-    const nw = Math.max(1, Math.round(len / (Q.mobile ? 22 : 12)));
+    const nw = Math.max(1, Math.round(len / (12 / Q.life)));
     for (let k = 0; k < nw; k++) items.push({ pts, cum, len, s: R() * len, dir: R() < 0.5 ? 1 : -1, sp: 0.18 + R() * 0.12, cart: false, col: robes[(R() * robes.length) | 0], ph: R() * 6 });
     if (len > 15 && R() < 0.8) items.push({ pts, cum, len, s: R() * len, dir: R() < 0.5 ? 1 : -1, sp: 0.12, cart: true, ph: R() * 6 });
   }
