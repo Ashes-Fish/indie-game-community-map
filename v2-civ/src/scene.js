@@ -52,6 +52,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.autoUpdate = false;   // frame() decides when the shadow map is redrawn (needsUpdate)
 setRenderer(renderer);
 
 const scene = new THREE.Scene();
@@ -167,7 +168,7 @@ async function init() {
   const postP = Q.post ? import('./post.js') : null;
   // the land / paper shader (~120 k characters) links in the driver's background while the data downloads and decodes;
   // left to its first draw it stalls that frame for seconds on some GPUs
-  const terrainReady = precompileTerrain();
+  let terrainReady = precompileTerrain();
   progress(0.1, '正在展开舆图…');
   const worlds = PATCHES.map((P) => new World(P));
   // the national and patch data are fetched once: the paper workers and the 3D patches decode the same bytes
@@ -205,6 +206,9 @@ async function init() {
     const ps = world.shared(shared);
     const terrain = new PatchTerrain(world, ps, Q.mobile);
     terrain.onBuild = precompileMesh;
+    // the fine chunks cast shadows with the terrain depth shader: start linking it now (all patches share its program);
+    // warmRender then draws it once, which is what finishes it on some drivers
+    if (!i) terrainReady = Promise.all([terrainReady, precompileTerrainShadow(terrain)]);
     scene.add(terrain.group);
     patches.push({ world, P: world.patch, cities, comms, sites: world.sites, rivers: rivers[i], ps, terrain, mid: null, near: null, revealT: -0.25 * i, buildT: 0 });
     progress(0.5 + 0.3 * (i + 1) / worlds.length);
@@ -247,7 +251,7 @@ async function init() {
   if (sv.d < FAR_D) await warmUp(true);
   progress(0.95, '即将完成…');
   // window.__dbg.pins() prints the snapshot to commit as src/layout-pins.json after adding communities
-  window.__dbg = { scene, cam, shared, paper, frame, buildLog, buildMid, buildNear, timed, renderer, camera, patches, COMMUNITIES, CITIES, select, focusCity, goRegion, REGIONS, perf, NAT_VIEW, pins: () => JSON.stringify(dumpPins(CITIES, COMMUNITIES), null, 2), get post() { return post; } };
+  window.__dbg = { scene, cam, shared, paper, frame, buildLog, buildMid, buildNear, timed, renderer, camera, patches, COMMUNITIES, CITIES, select, focusCity, goRegion, REGIONS, perf, stats, NAT_VIEW, pins: () => JSON.stringify(dumpPins(CITIES, COMMUNITIES), null, 2), get post() { return post; } };
   start();
   scheduler();
 }
@@ -288,6 +292,11 @@ function warmRender(pa, behindLoader) {
   // enough to compile the chunk programs and shadow variants), the rest are built a few per frame as usual
   const budget = behindLoader ? 2000 : 1;
   for (const pp of patches) { pp.terrain.update(camera, false, performance.now() + budget); if (pp.mid) pp.mid.visible = true; if (pp.near) pp.near.visible = true; }
+  // the sun and its shadow camera over the warm view too (frame() moves them, not this): the shadow pass then draws the
+  // fine terrain chunks and the city here, and this driver finishes their depth programs on that first real draw
+  const sunWas = [sun.position.clone(), sun.target.position.clone()], sc = sun.shadow.camera, scWas = [sc.left, sc.right, sc.top, sc.bottom];
+  sun.position.set(city.x, 0, city.z + 4).addScaledVector(SUN_DIR, 400); sun.target.position.set(city.x, 0, city.z + 4);
+  sc.left = sc.bottom = -40; sc.right = sc.top = 40; sc.updateProjectionMatrix();
   renderer.shadowMap.needsUpdate = true;
   const t0 = performance.now();
   // the post chain at street level (screen-space AO on, bloom, tilt-shift, SMAA) compiles its programs on this call;
@@ -295,6 +304,9 @@ function warmRender(pa, behindLoader) {
   if (post) { renderer.setSize(1, 1, false); post.setSize(1, 1); post.update(cam.dist); post.render(); renderer.setSize(innerWidth, innerHeight); post.setSize(innerWidth, innerHeight); }
   else { const rt = new THREE.WebGLRenderTarget(4, 4); renderer.setRenderTarget(rt); renderer.render(scene, camera); renderer.setRenderTarget(null); rt.dispose(); }
   buildLog.push(['warm-render', +(performance.now() - t0).toFixed(1)]);
+  sun.position.copy(sunWas[0]); sun.target.position.copy(sunWas[1]);
+  [sc.left, sc.right, sc.top, sc.bottom] = scWas; sc.updateProjectionMatrix();
+  renderer.shadowMap.needsUpdate = true;
   cam.fly = saved.fly; cam.target.set(saved.x, 0, saved.z); cam.dist = saved.d; cam.goalDist = saved.goal; cam.apply();
   farOn = null;
   for (const pp of patches) pp.terrain.update(camera, cam.dist > FAR_D, 0);   // back to the user's view
@@ -326,10 +338,11 @@ async function scheduler() {
     // nothing the camera needs: warm up 长三角 (country view start), so the first zoom-in has nothing left to compile.
     // Its shader links and texture uploads stall a few frames, so only while the map is still: not in the first seconds
     // after the loader lifts (it is still fading out) and not while the user is dragging, zooming or flying.
-    if (!job && !warmed && mapIsStill()) { await warmUp(); farOn = null; await tick(); continue; }
+    if (!job && !warmed && mapIsStill()) { building = true; try { await warmUp(); } finally { building = false; } farOn = null; await tick(); continue; }
     if (!job) { await new Promise((r) => setTimeout(r, 150)); continue; }
     const [pa, tier] = job;
-    if (tier === 'mid') await buildMid(pa); else await buildNear(pa);
+    building = true;
+    try { if (tier === 'mid') await buildMid(pa); else await buildNear(pa); } finally { building = false; }
     farOn = null;   // re-apply visibility for the new objects
     await tick();
   }
@@ -379,9 +392,22 @@ async function buildMid(pa) {
   // shaders compile in the GPU driver's background (KHR_parallel_shader_compile) while we wait here, so the first
   // frame that draws the new objects doesn't stall on them
   await compileSpread(g, world.id + ' compile', pa);
+  freezeStatic(g, [...comms.flatMap((c) => [c.inner, c.flag, c.flag && c.flag.parent]), pa.trade.group, pa.hs.group]);
   scene.add(g);
   pa.mid = g;
   growDistricts(pa);
+}
+
+// Static content: built once and never moved, so its local matrices need not be recomputed from position / rotation /
+// scale every frame (thousands of objects in a built patch; about 5 % of the main thread during a flight). three.js
+// still walks the tree and multiplies world matrices; it skips the decompose-and-compose per object. Moving parts keep
+// updating: district interiors and flags (they grow in), 黄山 (grows in, clouds drift), caravans and boats.
+function freezeStatic(root, moving) {
+  root.updateMatrixWorld(true);
+  const keep = new Set();
+  for (const m of moving) m && m.traverse((o) => keep.add(o));
+  for (const m of moving) for (let o = m && m.parent; o && o !== root; o = o.parent) keep.add(o);
+  root.traverse((o) => { if (!keep.has(o) && o !== root) o.matrixAutoUpdate = false; });
 }
 
 // stand-ins for what WebGLShadowMap draws: program cache keys depend on type, packing, side and the object (instancing),
@@ -428,6 +454,11 @@ function precompileTerrain() {
   const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), makeTerrainMaterial(shared, Q.mobile));
   return compileAs(m, Q.post);
 }
+function precompileTerrainShadow(terrain) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), terrain.material);
+  m.castShadow = true; m.customDepthMaterial = terrain.depth;
+  return compileShadow(m);
+}
 // a mesh built outside the tier groups (terrain detail levels): compile its programs on creation, not on first draw
 function precompileMesh(o) {
   compileScene(o);
@@ -445,8 +476,9 @@ function warmDraw(o, pa, shadow = false) {
   warmCam.position.set(ov.x, ov.d, ov.z + ov.d * 0.4); warmCam.lookAt(ov.x, 0, ov.z);
   warmCam.near = camera.near; warmCam.far = camera.far; warmCam.updateProjectionMatrix(); warmCam.updateMatrixWorld();
   const culled = []; o.traverse((m) => { if (m.frustumCulled) { culled.push(m); m.frustumCulled = false; } });
-  const parent = o.parent, shadows = renderer.shadowMap.autoUpdate;
-  renderer.shadowMap.autoUpdate = shadow;
+  const parent = o.parent;
+  renderer.shadowMap.autoUpdate = false;   // the frame loop sets needsUpdate itself
+  renderer.shadowMap.needsUpdate = shadow;
   if (shadow) {
     warmSun.pos.copy(sun.position); warmSun.tgt.copy(sun.target.position);
     sun.position.set(ov.x, 0, ov.z).addScaledVector(SUN_DIR, 400); sun.target.position.set(ov.x, 0, ov.z);
@@ -460,7 +492,6 @@ function warmDraw(o, pa, shadow = false) {
   renderer.setRenderTarget(prev);
   if (parent) parent.add(o); else scene.remove(o);
   if (shadow) { sun.position.copy(warmSun.pos); sun.target.position.copy(warmSun.tgt); renderer.shadowMap.needsUpdate = true; }
-  renderer.shadowMap.autoUpdate = shadows;
   for (const m of culled) m.frustumCulled = true;
 }
 
@@ -511,6 +542,7 @@ async function buildNear(pa) {
   pa.boats = canal ? buildBoats(world, canal) : { group: new THREE.Group(), update() {} };
   g.add(pa.props.group, pa.smoke.points, pa.walkers.group, pa.birds.mesh, pa.boats.group);
   await compileSpread(g, world.id + ' compile-near', pa);
+  freezeStatic(g, [pa.walkers.group, pa.birds.mesh, pa.boats.group, pa.smoke.points]);
   scene.add(g);
   pa.near = g;
 }
@@ -670,7 +702,7 @@ function start() {
       setTimeout(() => cam.flyTo(hz.x - 2, hz.z + 4, 46, 3.2), 6000);
     }
   }
-  renderer.setAnimationLoop(frame);
+  renderer.setAnimationLoop(qs.get('idle') === '0' ? frame : loop);
   if (qs.has('bench')) {
     const tReady = performance.now();
     let n = 0; const t0 = performance.now();
@@ -695,11 +727,51 @@ function adaptResolution(raw) {
   }
 }
 
+// Idle frame rate (O2): the map keeps animating (water, flags, smoke, birds), but once nothing has moved for IDLE_AFTER
+// seconds it is drawn at IDLE_FPS instead of the display rate: on a still map that is most of the GPU (and the
+// battery and heat on a phone). Any input, camera motion, build, reveal or panel animation brings full rate back.
+// Animation time still advances by the real elapsed time, so the slower frames only look less smooth, not slower.
+const IDLE_AFTER = 2, IDLE_FPS = Q.mobile ? 15 : 30;
+let busyUntil = 0, lastDrawn = 0, building = false;
+const wake = (s = IDLE_AFTER) => { busyUntil = Math.max(busyUntil, performance.now() + s * 1000); };
+for (const ev of ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchstart']) addEventListener(ev, () => wake(), { passive: true, capture: true });
+// why the map must be drawn at full rate right now ('' = it may idle)
+function busyReason() {
+  if (building || warmQueue) return 'build';
+  if (cam.fly || cam.pointers.size || Math.abs(cam.goalDist - cam.dist) > cam.dist * 1e-4 || cam.vel.lengthSq() > 0.01) return 'camera';
+  const hi = shared.uniforms.uHi.value;
+  if (hi > 0.001 && hi < 0.999) return 'highlight';
+  if (paper.pending.size) return 'paper';
+  if (beams.list.length) return 'beams';
+  // land rising from the paper, districts growing (a few seconds after each build or 重播建城); growth only advances
+  // below country scale, so a built patch seen from the whole country is not "still growing"
+  const far = cam.dist > FAR_D;
+  for (const pa of patches) {
+    if (pa.revealT < T_REVEAL + 0.5) return 'reveal';
+    if (!far && pa.mid && pa.buildT < (pa.comms.length ? pa.comms[pa.comms.length - 1].buildAt : 0) + T_GROW + 1.8) return 'grow';
+  }
+  return '';
+}
+const stats = { frames: 0, idle: false, reason: '' };
+let idle = false;
+function loop() {
+  const now = performance.now();
+  stats.reason = busyReason();
+  if (stats.reason) wake(IDLE_AFTER);
+  idle = now >= busyUntil;
+  stats.idle = idle;
+  if (idle && now - lastDrawn < 1000 / IDLE_FPS - 4) return;
+  lastDrawn = now;
+  frame();
+}
+
 function frame() {
   const now = performance.now();
   const raw = (now - last) / 1000;
-  const dt = Math.min(0.05, raw); last = now;
-  adaptResolution(raw);
+  // idle frames are further apart on purpose: let animation time follow the clock (up to two idle frames per step)
+  const dt = Math.min(idle ? 2 / IDLE_FPS : 0.05, raw); last = now;
+  stats.frames++;
+  if (!idle) adaptResolution(raw);   // throttled idle frames say nothing about the GPU
   if (warmQueue) { const w = warmQueue; warmQueue = null; w(); }
   // a tab opened in the background can start at 0 × 0 and miss the resize event
   if (renderer.domElement.width !== Math.floor(innerWidth * renderer.getPixelRatio()) && innerWidth > 0) onResize();
@@ -729,8 +801,11 @@ function frame() {
   if (isFar !== farOn) {
     farOn = isFar;
     for (const pa of patches) if (pa.mid) pa.mid.visible = !isFar;
-    renderer.shadowMap.autoUpdate = !isFar; renderer.shadowMap.needsUpdate = true;
+    renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = true;
   }
+  // shadow map: every frame while the camera or anything else is busy; on an idle map only every other frame (swaying
+  // trees, flags and walkers move their shadows a little, not enough to need it at 30 fps); never at country scale
+  if (!isFar && (!idle || stats.frames % 2 === 0)) renderer.shadowMap.needsUpdate = true;
   const deadline = performance.now() + 5;   // ms of this frame for building finer terrain chunks
   for (const pa of patches) {
     pa.terrain.update(camera, isFar, deadline);

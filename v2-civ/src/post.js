@@ -15,6 +15,8 @@ const TiltShift = (horizontal) => ({
     void main(){
       float d = max(0.0, abs(vUv.y - uFocus) - uWidth);
       float r = uAmount * smoothstep(0.0, 0.42, d) * 20.0;
+      // inside the sharp band (or a blur under a fifth of a pixel) the 13 taps would return the pixel itself
+      if (r < 0.2) { gl_FragColor = texture2D(tDiffuse, vUv); return; }
       vec2 dir = ${horizontal ? 'vec2(1.0, 0.0)' : 'vec2(0.0, 1.0)'} / uRes * (r / 6.0);
       vec4 c = vec4(0.0); float ws = 0.0;
       for (int i = -6; i <= 6; i++) {
@@ -47,6 +49,11 @@ export function makePost(renderer, scene, camera) {
   ao.configuration.color = new THREE.Color(0.08, 0.06, 0.03);
   ao.configuration.halfRes = false; // n8ao half-res path is incompatible with three r187
   ao.setQualityMode('Medium');
+  // the transparent objects (river and road ribbons, smoke, flag glints) lie flat on the ground or float in the air:
+  // AO under them reads the same either way. Transparency-aware mode would draw the whole scene twice more per frame
+  // (and traverse it three times) to handle them.
+  ao.autoDetectTransparency = false;
+  ao.configuration.transparencyAware = false;
   const plain = new RenderPass(scene, camera);
   plain.enabled = false;
   composer.addPass(plain);
