@@ -11,9 +11,12 @@
 ```sh
 BLENDER=/path/to/blender sh build_modern.sh            # 全部 13 个
 BLENDER=/path/to/blender sh build_modern.sh cyber cbd_big_a   # 只做其中几个
+SKIP_BAKE=1 sh build_modern.sh                                 # 不重新烘焙，只重新压缩临时目录里的烘焙原件
 ```
 
-预览图在系统临时目录的 `igcm-modern/` 里。城市中心贴图 2048（看得清幕墙格子），据点 1024。
+预览图和烘焙原件（`m_*.glb`，贴图是 PNG）在系统临时目录的 `igcm-modern/` 里。城市中心贴图 2048（看得清幕墙格子），据点 1024。
+
+贴图压成 KTX2（Basis ETC1S，最高质量档）：进了显卡仍是压缩格式，显存约为 WebP 解码后的 1/4，浏览器也不用现生成 mipmap。脚本需要 KTX-Software 4.x 的 `toktx`（Windows `scoop install ktx-software`，macOS `brew install ktx`）。代价是下载变大：13 个模型合计 2.9 MB → 5.2 MB（但只下载用到的那几个）。
 
 机器上没有 Python 时，`scripts/` 下的地形烘焙脚本也可以用 Blender 自带的 Python 跑（它带 numpy），另装 Pillow 和 SciPy 到单独目录，不动 Blender 本身：
 
@@ -47,5 +50,5 @@ sh compress.sh /tmp/out/guild.glb   ../public/models/a_guild.glb
 
 ## 其他
 
-- `compress.sh`：meshopt + WebP。
+- `compress.sh`：meshopt + WebP（只用于上面 A、B 的对比模型；现代建筑在 `build_modern.sh` 里转 KTX2）。
 - `contact_sheet.py`：截图转 JPEG、拼三版对比图。

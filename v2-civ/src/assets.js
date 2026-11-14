@@ -3,13 +3,17 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 
 const v = new URLSearchParams(location.search).get('asset');
 export const ASSET = v === 'a' || v === 'b' ? v : 'old';
 
 const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
 let renderer = null;
-export function setRenderer(r) { renderer = r; }
+// KTX2 (Basis Universal) textures stay compressed on the GPU: about a quarter of the memory of the same WebP decoded, and
+// no mipmap generation on upload. The transcoder (wasm) is fetched only when the first KTX2 texture arrives.
+const ktx2 = new KTX2Loader();
+export function setRenderer(r) { renderer = r; ktx2.detectSupport(r); loader.setKTX2Loader(ktx2); }
 
 // Upload a model's textures one per task: a 2048² texture with mipmaps costs tens of ms, and a city's worth landing
 // in the first frame that draws them is a visible hitch. Resolves once every texture is on the GPU.
