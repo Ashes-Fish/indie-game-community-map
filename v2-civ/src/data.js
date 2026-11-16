@@ -45,6 +45,9 @@ const META = {
   '创乐坊': { key: 'chuanglefang', model: { kind: 'builtin', style: 'paifang' }, prefDir: 2, logo: 'chuanglefang' },
   '存档点': { key: 'cundang', model: { kind: 'builtin', style: 'savepoint' }, toward: [118.9, 32.05], logo: null },
   'The Pinewood Lab艺术游戏社区': { key: 'pinewood', model: { kind: 'builtin', style: 'pinewood' }, toward: [118.63, 32.15], logo: 'pinewood', short: 'Pinewood Lab' },
+  '冻土回声': { key: 'dongtu', logo: 'dongtu' },
+  // 统计表写的是"上海/纽约"：地图上落在上海，纽约记为其他活动城市
+  '纽约大学游戏社': { key: 'nyugame', short: '纽大游戏社' },
 };
 
 function strHash(s) { let h = 2166136261; for (const ch of s) h = Math.imul(h ^ ch.codePointAt(0), 16777619); return h >>> 0; }

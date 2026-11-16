@@ -342,5 +342,41 @@
     "website": "",
     "logo": "",
     "photos": []
+  },
+  {
+    "name": "纽约大学游戏社",
+    "city": "上海",
+    "otherCities": "纽约",
+    "founded": "2022",
+    "foundedRaw": "2022",
+    "address": "",
+    "leader": "Ruby",
+    "contact": "微信:JY6plus_1",
+    "sizeRaw": "1000+",
+    "size": 1000,
+    "intro": "纽约大学游戏社是美东具有广泛影响力的游戏社群。我们以游戏连结同好，通过游戏活动、行业沙龙、电竞赛事、项目展示以及产业资源对接，搭建起校园通往游戏行业的桥梁，陪伴同学们结识志同道合的伙伴，一同追寻游戏热爱，探索创作与职业的更多可能。",
+    "wechatGroup": "通过负责人进群",
+    "qqGroup": "",
+    "website": "",
+    "logo": "",
+    "photos": []
+  },
+  {
+    "name": "冻土回声",
+    "city": "沈阳",
+    "otherCities": "",
+    "founded": "2023",
+    "foundedRaw": "2023",
+    "address": "网易沈阳数字产业中心",
+    "leader": "Enki",
+    "contact": "微信:firevenus",
+    "sizeRaw": "1000+",
+    "size": 1000,
+    "intro": "冻土回声 是专注于独立游戏生态的内容与活动组织平台，致力于连接开发者、玩家与行业资源，推动本地与国际独立游戏发展。\n\n我们已经成功组织和承办过多项重要活动，包括：\n•Global Game Jam & CIGA Game Jam（沈阳站）\n•Unity UUG（沈阳站）\n•UGDAP 游戏巡航计划（沈阳站）\n•进校园宣讲，已走进辽宁传媒学院、沈阳城市学院、吉林动画学院\n•举办过三次展会的游戏板块：SSCA 沈阳动漫展与北境动漫游戏嘉年华\n•举办过冻土学院游戏开发公益培训\n\n未来，冻土回声将继续拓展业务版图，开展游戏发行与运营服务，推动跨国游戏开发产业合作，助力更多创作者成长与成功。",
+    "wechatGroup": "通过负责人进群",
+    "qqGroup": "982472745",
+    "website": "https://permafrost-echo.com/",
+    "logo": "images/logo_冻土回声.jpg",
+    "photos": []
   }
 ]

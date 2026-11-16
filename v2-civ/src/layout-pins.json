@@ -1,11 +1,103 @@
 {
-  "cities": { "nanjing": 2, "changzhou": 2, "changshu": 1, "shanghai": 2, "hangzhou": 2 },
+  "cities": {
+    "nanjing": 2,
+    "changzhou": 2,
+    "changshu": 1,
+    "shanghai": 2,
+    "hangzhou": 2,
+    "xiamen": 2,
+    "beijing": 2,
+    "xian": 2,
+    "tianjin": 2,
+    "chengdu": 2,
+    "chongqing": 2,
+    "shenzhen": 2,
+    "shenyang": 2
+  },
   "communities": {
-    "keting": [94, 68],
-    "cyberia": [92, 69],
-    "xingyouji": [93, 68],
-    "chuanglefang": [97, 51],
-    "cundang": [89, 50],
-    "pinewood": [87, 50]
+    "c1jkfr4x": [
+      48,
+      138
+    ],
+    "cbvsp43": [
+      104,
+      -37
+    ],
+    "cxlljhe": [
+      103,
+      -36
+    ],
+    "c1f7h48w": [
+      14,
+      33
+    ],
+    "cr6ewax": [
+      107,
+      -29
+    ],
+    "cqxo35y": [
+      -47,
+      76
+    ],
+    "ludere": [
+      103,
+      52
+    ],
+    "c1tvcali": [
+      14,
+      34
+    ],
+    "keting": [
+      94,
+      68
+    ],
+    "chuanglefang": [
+      97,
+      51
+    ],
+    "cyberia": [
+      92,
+      69
+    ],
+    "xingyouji": [
+      93,
+      68
+    ],
+    "c1oncz7n": [
+      -33,
+      89
+    ],
+    "cx0pdrl": [
+      -46,
+      75
+    ],
+    "c1sx1d92": [
+      2,
+      163
+    ],
+    "cundang": [
+      89,
+      50
+    ],
+    "pinewood": [
+      87,
+      50
+    ],
+    "cfscrh4": [
+      0,
+      164
+    ],
+    "c3gjh51": [
+      166,
+      -68
+    ],
+    "nyugame": [
+      110,
+      56
+    ],
+    "dongtu": [
+      166,
+      -67
+    ]
   }
 }
