@@ -1,5 +1,5 @@
 // 兜底模式（全国版优化方案 O3）: no WebGL2, or ?lite=1. The national paper map is painted once onto a 2D canvas by the same
-// painter as the 3D version's paper tiles (natdraw.js), with a seal per community city; the 社团列表 and the community
+// painter as the 3D version's paper tiles (natdraw.js), with a seal per community city; the 社群列表 and the community
 // panel are the regular UI. Pan by dragging, zoom with the wheel or a pinch: the map is redrawn at the new scale.
 import { CITIES, COMMUNITIES, HUB_CITIES } from './data.js';
 import { PATCHES } from './patches.js';

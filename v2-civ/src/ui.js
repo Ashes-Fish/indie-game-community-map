@@ -7,7 +7,7 @@ import { icon, FRAME, FRAME_S } from './icons.js';
 import { modelLabel, FEATURES } from './models.js';
 
 const h = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
-const BANNER_ICONS = 6; // the rest show as "+N"; the full list is in the 社团列表 panel
+const BANNER_ICONS = 6; // the rest show as "+N"; the full list is in the 社群列表 panel
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 export class UI {
@@ -25,13 +25,13 @@ export class UI {
     document.body.appendChild(h('div', 'vignette'));
 
     // title
-    const title = h('div', 'title civ-panel', `<div class="seal">游</div><div><h1>中国独立游戏社团地图</h1><div class="sub">${regionName} · ${communities.length} 个社团 · ${cities.length} 座城市</div><div class="crumb"></div></div>`);
+    const title = h('div', 'title civ-panel', `<div class="seal">游</div><div><h1>中国独立游戏社群地图</h1><div class="sub">${regionName} · ${communities.length} 个社群 · ${cities.length} 座城市</div><div class="crumb"></div></div>`);
     this.root.appendChild(title);
     this.crumb = title.querySelector('.crumb');
     this.crumbKey = '';
 
     // list
-    const lb = h('div', 'listbtn civ-panel', `${icon('list')}<span>社团列表</span><span class="n">${communities.length}</span>`);
+    const lb = h('div', 'listbtn civ-panel', `${icon('list')}<span>社群列表</span><span class="n">${communities.length}</span>`);
     const list = h('div', 'list civ-panel');
     for (const city of cities) {
       const cs = communities.filter((c) => c.cityId === city.id);
@@ -71,7 +71,7 @@ export class UI {
       const n = r.cities.reduce((s, c) => s + (this.count[c.id] || 0), 0);
       const el = n ? h('div', 'banner hub', `<div class="bar"><div class="pop">${n}</div><div class="nm">${r.name}</div></div>`)
         : h('div', 'rseal', `<i></i><span>${r.name}</span>`);
-      if (!n) el.title = r.name + ' · 暂无社团';
+      if (!n) el.title = r.name + ' · 暂无社群';
       const lead = r.cities.slice().sort((a, b) => this.count[b.id] - this.count[a.id])[0];
       el.style.setProperty('--c', lead ? lead.color : '#7a8699');
       el.onclick = (e) => { e.stopPropagation(); this.onRegion(r); };
@@ -100,8 +100,11 @@ export class UI {
     const fb = h('div', 'btn civ-panel feedbackbtn', `${icon('mail')}<span>提交反馈</span>`);
     fb.onclick = () => this.openFeedback();
     this.root.appendChild(fb);
-    this.root.appendChild(h('div', 'credit', '高程：AWS Terrain Tiles（SRTM 等）· 水系：Natural Earth · 社团数据：社团自填'));
-    this.help = h('div', 'help civ-panel', (mobile ? [['drag', '单指拖动'], ['zoom', '双指缩放'], ['tap', '点社团看详情']] : [['drag', '拖拽平移'], ['zoom', '滚轮缩放'], ['tap', '点击社团查看详情']])
+    const qb = h('div', 'btn civ-panel qrbtn', `${icon('qr')}<span>扫码分享</span>`);
+    qb.onclick = () => this.openQR();
+    this.root.appendChild(qb);
+    this.root.appendChild(h('div', 'credit', '高程：AWS Terrain Tiles（SRTM 等）· 水系：Natural Earth · 社群数据：社群自填'));
+    this.help = h('div', 'help civ-panel', (mobile ? [['drag', '单指拖动'], ['zoom', '双指缩放'], ['tap', '点社群看详情']] : [['drag', '拖拽平移'], ['zoom', '滚轮缩放'], ['tap', '点击社群查看详情']])
       .map(([k, t]) => `<span>${icon(k)}${t}</span>`).join(''));
     this.root.appendChild(this.help);
     setTimeout(() => { this.help.style.opacity = '0'; }, 9000);
@@ -229,7 +232,7 @@ export class UI {
     if (!c) { this.tip.style.display = 'none'; return; }
     const city = this.cities.find((k) => k.id === c.cityId);
     if (c.isCity) this.tip.innerHTML = `<b>${esc(c.name)}</b>${c.tier && c.radius > 2 ? ' · ' + c.tier.name : ''} · 点击查看全城`;
-    else if (c.members.length > 1) this.tip.innerHTML = `<b>${c.members.length} 个社团</b> · ${esc(city.name)} · 点击查看`;
+    else if (c.members.length > 1) this.tip.innerHTML = `<b>${c.members.length} 个社群</b> · ${esc(city.name)} · 点击查看`;
     else this.tip.innerHTML = `<b>${esc(c.members[0].name)}</b> · ${esc(city.name)} · 点击查看`;
     this.tip.style.display = 'block';
     this.tip.style.transform = `translate(${x + 16}px,${y + 14}px)`;
@@ -262,10 +265,10 @@ export class UI {
         <div><h2>${esc(c.name)}</h2><div class="meta">${metaBits.map((b) => `<span>${b}</span>`).join('')}</div></div>
         <div class="x" title="关闭">${icon('close')}</div></div>
       <div class="bd">
-        <p class="intro">${esc(c.intro || '这个社团还没写简介——直接加负责人聊聊吧。')}</p>
+        <p class="intro">${esc(c.intro || '这个社群还没写简介——直接加负责人聊聊吧。')}</p>
         <div class="sec">联络</div>
         ${rows.map(([k, v, copy]) => `<div class="row"><div class="k">${k}</div><div class="v">${v}</div>${copy ? `<button class="copy" data-v="${esc(copy)}">${icon('copy')}<span>复制</span></button>` : ''}</div>`).join('')}
-        <div class="hint">主理人欢迎同好加好友，添加时备注「社团地图」更容易通过。</div>
+        <div class="hint">主理人欢迎同好加好友，添加时备注「社群地图」更容易通过。</div>
         <div class="sec">据点外观</div>
         <div class="row"><div class="k">造型</div><div class="v">${esc(modelLabel(c.model))}</div></div>
         <button class="custom-model" ${FEATURES.customModels ? '' : 'disabled'} title="上传 .glb 模型作为据点外观">自定义据点模型<span>${FEATURES.customModels ? '' : '敬请期待'}</span></button>
@@ -291,7 +294,7 @@ export class UI {
     this.panel.style.setProperty('--civ', city.color);
     this.panel.innerHTML = `
       <div class="hd"><div class="logo ph">${s.members.length}</div>
-        <div><h2>${esc(city.name)} · 聚落</h2><div class="meta">这一格聚集了 ${s.members.length} 个社团</div></div>
+        <div><h2>${esc(city.name)} · 聚落</h2><div class="meta">这一格聚集了 ${s.members.length} 个社群</div></div>
         <div class="x" title="关闭">×</div></div>
       <div class="bd cluster-list">${s.members.map((c, i) => `<div class="item" data-i="${i}">${c.logo ? `<img src="${this.logoSrc(c)}" alt="">` : `<div class="ph">${esc(c.glyph)}</div>`}<div><b>${esc(c.name)}</b><small>${esc(c.intro || '')}</small></div></div>`).join('')}</div>`;
     this.panel.querySelector('.x').onclick = () => this.closePanel();
@@ -305,12 +308,12 @@ export class UI {
     this.panel.style.setProperty('--civ', '#c79a3c');
     this.panel.innerHTML = `
       <div class="hd"><div class="logo ph">${icon('mail')}</div>
-        <div><h2>提交反馈</h2><div class="meta"><span>纠错、补充社团、建议都可以</span></div></div>
+        <div><h2>提交反馈</h2><div class="meta"><span>纠错、补充社群、建议都可以</span></div></div>
         <div class="x" title="关闭">${icon('close')}</div></div>
       <form class="bd feedback" novalidate>
         <label>称呼<input name="name" maxlength="40" autocomplete="nickname" placeholder="怎么称呼你" required></label>
         <label>邮箱<input name="email" type="email" maxlength="120" autocomplete="email" placeholder="方便我们回复你" required></label>
-        <label>内容<textarea name="text" maxlength="2000" rows="7" placeholder="想说的话、要更正的信息、想加入地图的社团……" required></textarea></label>
+        <label>内容<textarea name="text" maxlength="2000" rows="7" placeholder="想说的话、要更正的信息、想加入地图的社群……" required></textarea></label>
         <input name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
         <div class="msg" role="status"></div>
         <button type="submit" class="send">发送</button>
@@ -335,6 +338,31 @@ export class UI {
     requestAnimationFrame(() => this.panel.classList.add('open'));
     this.openId = 'feedback';
     setTimeout(() => form.querySelector('input').focus({ preventScroll: true }), 300);
+  }
+  // 扫码分享：网站二维码（public/qr.svg，指向 http://118.89.150.249:8090/，由 docs/网站二维码.svg 复制）
+  openQR() {
+    const url = 'http://118.89.150.249:8090/';
+    let m = this.qrModal;
+    if (!m) {
+      m = this.qrModal = h('div', 'qrmodal', `
+        <div class="box civ-panel"><div class="x" title="关闭">${icon('close')}</div>
+          <h2>扫码打开地图</h2>
+          <img src="${this.base}qr.svg" alt="网站二维码" width="220" height="220">
+          <div class="url">${url}</div>
+          <button class="copy">${icon('copy')}<span>复制链接</span></button>
+          <p>手机相机或浏览器扫码即可；微信里如提示“非官方网页”，点“继续访问”。</p></div>`);
+      m.onclick = (e) => { if (e.target === m || e.target.closest('.x')) m.classList.remove('open'); };
+      const b = m.querySelector('.copy');
+      b.onclick = async () => {
+        try { await navigator.clipboard.writeText(url); } catch (e) {
+          const ta = document.createElement('textarea'); ta.value = url; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+        }
+        b.innerHTML = `${icon('check')}<span>已复制</span>`;
+        setTimeout(() => { b.innerHTML = `${icon('copy')}<span>复制链接</span>`; }, 1600);
+      };
+      this.root.appendChild(m);
+    }
+    requestAnimationFrame(() => m.classList.add('open'));
   }
   closePanel() { this.panel.classList.remove('open'); this.openId = null; this.onClose && this.onClose(); }
 }

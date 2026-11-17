@@ -234,6 +234,7 @@
 
 /* 提交反馈：按钮在"全国地图"上面；表单用右侧面板 */
 .feedbackbtn{position:absolute;left:16px;bottom:116px}
+.qrbtn{position:absolute;left:16px;bottom:166px}
 .panel .feedback{display:flex;flex-direction:column;gap:12px}
 .panel .feedback label{display:flex;flex-direction:column;gap:5px;font-size:13px;color:#9fb0cf;letter-spacing:.08em}
 .panel .feedback input,.panel .feedback textarea{font:15px/1.5 var(--serif);color:var(--cream);background:rgba(255,255,255,.06);border:1px solid rgba(212,171,85,.35);border-radius:2px;padding:8px 10px;outline:none;resize:vertical;user-select:text;-webkit-user-select:text}
@@ -249,4 +250,15 @@
 .panel .feedback .sent b{display:block;margin:10px 0 6px;font:700 18px var(--title);letter-spacing:.2em}
 .panel .feedback .sent p{margin:0;font-size:13px;color:#9fb0cf}
 .panel .hd .logo.ph .ic{width:26px;height:26px}
-@media (max-width: 720px){ .feedbackbtn{left:8px;bottom:94px} }
+@media (max-width: 720px){ .feedbackbtn{left:8px;bottom:94px} .qrbtn{left:8px;bottom:136px} }
+.qrmodal{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:rgba(10,14,24,.55);opacity:0;visibility:hidden;transition:opacity .25s,visibility .25s}
+.qrmodal.open{opacity:1;visibility:visible}
+.qrmodal .box{position:relative;width:min(320px,86vw);padding:22px 22px 18px;text-align:center;color:var(--cream)}
+.qrmodal h2{margin:0 0 14px;font:700 19px var(--title);letter-spacing:.25em;text-indent:.25em;color:var(--gold2)}
+.qrmodal img{display:block;width:min(220px,62vw);height:auto;margin:0 auto;background:#fff;padding:8px;border-radius:3px;box-shadow:0 0 0 2px rgba(212,171,85,.6)}
+.qrmodal .url{margin:12px 0 10px;font:14px/1.4 ui-monospace,Consolas,monospace;color:#cfdaf0;user-select:text;-webkit-user-select:text;word-break:break-all}
+.qrmodal .copy{display:inline-flex;align-items:center;gap:6px;padding:6px 16px;font:13px var(--serif);color:var(--cream);cursor:pointer;background:rgba(255,255,255,.07);border:1px solid rgba(212,171,85,.45);border-radius:2px}
+.qrmodal .copy .ic{width:16px;height:16px}
+.qrmodal p{margin:12px 0 0;font-size:12px;line-height:1.6;color:#9fb0cf}
+.qrmodal .x{position:absolute;right:10px;top:10px;width:28px;height:28px;cursor:pointer;color:#9fb0cf}
+.qrmodal .x .ic{width:100%;height:100%}

@@ -29,7 +29,7 @@ import { pickTier, rememberTier, TIERS, lower, gpuName } from './tiers.js';
 const BASE = import.meta.env.BASE_URL;
 const qs = new URLSearchParams(location.search);
 const PAPER = PAPER_STYLES[qs.get('paper')] ? qs.get('paper') : 'qinglv';
-document.title = '中国独立游戏社团地图';
+document.title = '中国独立游戏社群地图';
 document.querySelector('#loader .sub').textContent = '全国';
 const coarse = matchMedia('(pointer: coarse)').matches;
 // mobile: the touch layout (camera framing, panel, labels). The rendering cost is the device tier's (tiers.js).

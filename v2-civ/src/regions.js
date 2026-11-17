@@ -1,6 +1,6 @@
 // 地理大区 (regions): the middle level of 全国 → 大区 → 城市. The seven customary geographic regions of China, each
 // a fixed list of provinces; a city belongs to its province's region. Regions without a community yet are reserved:
-// they still appear on the country view (grey seal, "暂无社团"), so the map shows the whole country's shape, and a
+// they still appear on the country view (grey seal, "暂无社群"), so the map shows the whole country's shape, and a
 // city added there later lands in the right region without code changes. One region may hold several land patches
 // (华东 holds 长三角 and 闽南闽东; 华北 holds 京津 and, later, anything in 山西 or 内蒙古).
 import { toWorld } from './config.js';
