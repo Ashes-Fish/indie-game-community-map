@@ -251,8 +251,8 @@
 .panel .feedback .sent p{margin:0;font-size:13px;color:#9fb0cf}
 .panel .hd .logo.ph .ic{width:26px;height:26px}
 @media (max-width: 720px){ .feedbackbtn{left:8px;bottom:94px} .qrbtn{left:8px;bottom:136px} }
-.qrmodal{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;background:rgba(10,14,24,.55);opacity:0;visibility:hidden;transition:opacity .25s,visibility .25s}
-.qrmodal.open{opacity:1;visibility:visible}
+.qrmodal{position:fixed;inset:0;z-index:40;pointer-events:none;display:flex;align-items:center;justify-content:center;background:rgba(10,14,24,.55);opacity:0;visibility:hidden;transition:opacity .25s,visibility .25s}
+.qrmodal.open{opacity:1;visibility:visible;pointer-events:auto}
 .qrmodal .box{position:relative;width:min(320px,86vw);padding:22px 22px 18px;text-align:center;color:var(--cream)}
 .qrmodal h2{margin:0 0 14px;font:700 19px var(--title);letter-spacing:.25em;text-indent:.25em;color:var(--gold2)}
 .qrmodal img{display:block;width:min(220px,62vw);height:auto;margin:0 auto;background:#fff;padding:8px;border-radius:3px;box-shadow:0 0 0 2px rgba(212,171,85,.6)}

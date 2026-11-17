@@ -352,6 +352,7 @@ export class UI {
           <button class="copy">${icon('copy')}<span>复制链接</span></button>
           <p>手机相机或浏览器扫码即可；微信里如提示“非官方网页”，点“继续访问”。</p></div>`);
       m.onclick = (e) => { if (e.target === m || e.target.closest('.x')) m.classList.remove('open'); };
+      addEventListener('keydown', (e) => { if (e.key === 'Escape') m.classList.remove('open'); });
       const b = m.querySelector('.copy');
       b.onclick = async () => {
         try { await navigator.clipboard.writeText(url); } catch (e) {
