@@ -47,10 +47,10 @@ export class UI {
     this.root.append(lb, list);
     this.list = list;
 
-    // banners
+    // banners: the size badge only for cities above the default (府城 and up); 小镇 / the default city show none
     this.banners = cities.map((city) => {
       const cs = communities.filter((c) => c.cityId === city.id || (c.otherCities || '').includes(city.name));
-      const el = h('div', 'banner', `<div class="bar"><div class="pop">${cs.length}</div><div class="nm">${city.name}</div>${city.tier && city.radius !== 2 ? `<div class="tier">${city.tier.name}</div>` : ''}</div><div class="icons">${cs.slice(0, BANNER_ICONS).map(logo).join('')}${cs.length > BANNER_ICONS ? `<span class="more">+${cs.length - BANNER_ICONS}</span>` : ''}</div>`);
+      const el = h('div', 'banner', `<div class="bar"><div class="pop">${cs.length}</div><div class="nm">${city.name}</div>${city.tier && city.radius > 2 ? `<div class="tier">${city.tier.name}</div>` : ''}</div><div class="icons">${cs.slice(0, BANNER_ICONS).map(logo).join('')}${cs.length > BANNER_ICONS ? `<span class="more">+${cs.length - BANNER_ICONS}</span>` : ''}</div>`);
       el.style.setProperty('--c', city.color);
       el.querySelector('.bar').onclick = (e) => { e.stopPropagation(); onCity(city); };
       el.querySelectorAll('.icons > :not(.more)').forEach((ic, i) => { ic.style.cursor = 'pointer'; ic.onclick = (e) => { e.stopPropagation(); onPick(cs[i], true); }; });
@@ -225,7 +225,7 @@ export class UI {
   showTip(c, x, y) {
     if (!c) { this.tip.style.display = 'none'; return; }
     const city = this.cities.find((k) => k.id === c.cityId);
-    if (c.isCity) this.tip.innerHTML = `<b>${esc(c.name)}</b>${c.tier ? ' · ' + c.tier.name : ''} · 点击查看全城`;
+    if (c.isCity) this.tip.innerHTML = `<b>${esc(c.name)}</b>${c.tier && c.radius > 2 ? ' · ' + c.tier.name : ''} · 点击查看全城`;
     else if (c.members.length > 1) this.tip.innerHTML = `<b>${c.members.length} 个社团</b> · ${esc(city.name)} · 点击查看`;
     else this.tip.innerHTML = `<b>${esc(c.members[0].name)}</b> · ${esc(city.name)} · 点击查看`;
     this.tip.style.display = 'block';
