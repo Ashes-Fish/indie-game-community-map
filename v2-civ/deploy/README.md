@@ -35,3 +35,25 @@ ssh -i ~/.ssh/id_ed25519_cloudrelay root@118.89.150.249 'cd /www/wwwroot && mv i
 ## 注意
 
 全国版用了 DataV 的省界数据，地图合规（审图号）问题还没解决；公开访问前已知悉这一点（2026-11-16 决定公开）。
+
+## 提交反馈
+
+页面左下角「提交反馈」→ 称呼、邮箱、内容 → `POST /api/feedback` → nginx 转给本机 `127.0.0.1:3201` 的 `feedback-server.mjs`（只用 Node 自带模块）。
+
+- 服务：`systemctl status igcm-feedback`（`/etc/systemd/system/igcm-feedback.service`，以 `igcm` 用户运行）
+- 数据：`/srv/igcm-feedback/feedback.jsonl`，一行一条 `{at,name,email,text,page,ua,ip}`。查看：
+  `ssh -i ~/.ssh/id_ed25519_cloudrelay root@118.89.150.249 'cat /srv/igcm-feedback/feedback.jsonl'`
+- 防刷：隐藏字段、每个 IP 10 分钟 5 条、全站每天 500 条
+- 邮件通知：`/etc/igcm-feedback.env`（权限 600，自己在服务器上写，授权码不进仓库）
+  ```
+  SMTP_USER=xxx@qq.com
+  SMTP_PASS=<QQ 邮箱授权码>
+  NOTIFY_TO=xxx@qq.com
+  ```
+  改完 `systemctl restart igcm-feedback`；`curl -s 127.0.0.1:3201/api/feedback/health` 里 `"mail":true` 即已开启。不配则只存不发。
+- 更新接收程序：`scp feedback-server.mjs root@…:/srv/igcm-feedback/ && systemctl restart igcm-feedback`
+- 本地开发：`PORT=3201 node deploy/feedback-server.mjs`，vite 已把 `/api` 代理过去。
+
+## 二维码
+
+`docs/网站二维码.png` / `.svg` 指向 `http://118.89.150.249:8090/`（纠错等级 H）。用手机相机或浏览器扫码可直接打开；微信内置浏览器对 IP + http 链接可能提示"非官方网页"，点"继续访问"即可，要彻底消除需要备案域名 + https。

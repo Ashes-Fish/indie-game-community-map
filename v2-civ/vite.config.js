@@ -15,7 +15,8 @@ const dropAssetComparison = {
 export default defineConfig({
   base: './',
   plugins: [dropAssetComparison],
-  server: { fs: { allow: [resolve(import.meta.dirname, '..')] }, port: 5181 },
+  // /api/feedback：本地开发时转给 deploy/feedback-server.mjs（PORT=3201 node deploy/feedback-server.mjs）
+  server: { fs: { allow: [resolve(import.meta.dirname, '..')] }, port: 5181, proxy: { '/api': 'http://127.0.0.1:3201' } },
   resolve: { dedupe: ['three'] },
   optimizeDeps: {
     include: [

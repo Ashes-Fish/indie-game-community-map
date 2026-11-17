@@ -97,6 +97,9 @@ export class UI {
     const cb = h('div', 'btn civ-panel tochina', `${icon('map')}<span>全国地图</span>`);
     cb.onclick = onChina;
     this.root.appendChild(cb);
+    const fb = h('div', 'btn civ-panel feedbackbtn', `${icon('mail')}<span>提交反馈</span>`);
+    fb.onclick = () => this.openFeedback();
+    this.root.appendChild(fb);
     this.root.appendChild(h('div', 'credit', '高程：AWS Terrain Tiles（SRTM 等）· 水系：Natural Earth · 社团数据：社团自填'));
     this.help = h('div', 'help civ-panel', (mobile ? [['drag', '单指拖动'], ['zoom', '双指缩放'], ['tap', '点社团看详情']] : [['drag', '拖拽平移'], ['zoom', '滚轮缩放'], ['tap', '点击社团查看详情']])
       .map(([k, t]) => `<span>${icon(k)}${t}</span>`).join(''));
@@ -295,6 +298,43 @@ export class UI {
     this.panel.querySelectorAll('.cluster-list .item').forEach((el) => { el.onclick = () => this.openPanel(s.members[+el.dataset.i]); });
     requestAnimationFrame(() => this.panel.classList.add('open'));
     this.openId = 'site:' + s.hex.join(',');
+  }
+  // 提交反馈：称呼、邮箱、内容 → POST /api/feedback（服务器上的 deploy/feedback-server.mjs）
+  openFeedback() {
+    this.panel.classList.remove('campus');
+    this.panel.style.setProperty('--civ', '#c79a3c');
+    this.panel.innerHTML = `
+      <div class="hd"><div class="logo ph">${icon('mail')}</div>
+        <div><h2>提交反馈</h2><div class="meta"><span>纠错、补充社团、建议都可以</span></div></div>
+        <div class="x" title="关闭">${icon('close')}</div></div>
+      <form class="bd feedback" novalidate>
+        <label>称呼<input name="name" maxlength="40" autocomplete="nickname" placeholder="怎么称呼你" required></label>
+        <label>邮箱<input name="email" type="email" maxlength="120" autocomplete="email" placeholder="方便我们回复你" required></label>
+        <label>内容<textarea name="text" maxlength="2000" rows="7" placeholder="想说的话、要更正的信息、想加入地图的社团……" required></textarea></label>
+        <input name="website" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+        <div class="msg" role="status"></div>
+        <button type="submit" class="send">发送</button>
+      </form>`;
+    const form = this.panel.querySelector('form'), msg = form.querySelector('.msg'), send = form.querySelector('.send');
+    this.panel.querySelector('.x').onclick = () => this.closePanel();
+    const say = (t, ok) => { msg.textContent = t; msg.className = 'msg ' + (ok ? 'ok' : 'err'); };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const v = Object.fromEntries(new FormData(form));
+      if (!v.name.trim()) return say('请填写称呼');
+      if (!/^[^s@]+@[^s@]+.[^s@]+$/.test(v.email.trim())) return say('请填写正确的邮箱地址');
+      if (v.text.trim().length < 2) return say('请填写反馈内容');
+      send.disabled = true; say('发送中…', true);
+      try {
+        const r = await fetch(this.base + 'api/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...v, page: location.href }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) throw new Error(j.error || '发送失败，请稍后再试');
+        form.innerHTML = '<div class="sent">' + icon('check') + '<b>已收到，谢谢！</b><p>我们会通过邮箱联系你。</p></div>';
+      } catch (err) { send.disabled = false; say(err.message === 'Failed to fetch' ? '网络不通，请稍后再试' : err.message); }
+    };
+    requestAnimationFrame(() => this.panel.classList.add('open'));
+    this.openId = 'feedback';
+    setTimeout(() => form.querySelector('input').focus({ preventScroll: true }), 300);
   }
   closePanel() { this.panel.classList.remove('open'); this.openId = null; this.onClose && this.onClose(); }
 }

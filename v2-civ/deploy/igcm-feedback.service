@@ -1,0 +1,21 @@
+# 社团地图反馈接收服务（feedback-server.mjs）。安装见 deploy/README.md「反馈」一节。
+[Unit]
+Description=IGCM feedback receiver
+After=network.target
+
+[Service]
+User=igcm
+Group=igcm
+EnvironmentFile=-/etc/igcm-feedback.env
+Environment=PORT=3201 DATA_DIR=/srv/igcm-feedback
+ExecStart=/usr/local/bin/node /srv/igcm-feedback/feedback-server.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/igcm-feedback
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -231,3 +231,22 @@
 @media (max-width: 720px){ .pname{font-size:15px} .cseal span{font-size:10.5px} .cseal.cap span{font-size:12px} }
 /* 兜底模式 (lite.js): the flat map carries its own city seals; the note sits where the credits are */
 .lite-note{bottom:34px}
+
+/* 提交反馈：按钮在"全国地图"上面；表单用右侧面板 */
+.feedbackbtn{position:absolute;left:16px;bottom:116px}
+.panel .feedback{display:flex;flex-direction:column;gap:12px}
+.panel .feedback label{display:flex;flex-direction:column;gap:5px;font-size:13px;color:#9fb0cf;letter-spacing:.08em}
+.panel .feedback input,.panel .feedback textarea{font:15px/1.5 var(--serif);color:var(--cream);background:rgba(255,255,255,.06);border:1px solid rgba(212,171,85,.35);border-radius:2px;padding:8px 10px;outline:none;resize:vertical;user-select:text;-webkit-user-select:text}
+.panel .feedback input:focus,.panel .feedback textarea:focus{border-color:var(--gold2);background:rgba(255,255,255,.09)}
+.panel .feedback .hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+.panel .feedback .msg{min-height:18px;font-size:13px}
+.panel .feedback .msg.err{color:#ff9a86}
+.panel .feedback .msg.ok{color:#9fb0cf}
+.panel .feedback .send{align-self:flex-start;padding:8px 26px;font:700 15px var(--title);letter-spacing:.3em;text-indent:.3em;color:#1a1206;cursor:pointer;border:none;border-radius:2px;background:linear-gradient(180deg,#f6dc95,#c99a45);box-shadow:0 2px 6px rgba(0,0,0,.4)}
+.panel .feedback .send:disabled{opacity:.55;cursor:default}
+.panel .feedback .sent{text-align:center;padding:40px 0;color:var(--cream)}
+.panel .feedback .sent .ic{width:42px;height:42px;color:var(--gold2)}
+.panel .feedback .sent b{display:block;margin:10px 0 6px;font:700 18px var(--title);letter-spacing:.2em}
+.panel .feedback .sent p{margin:0;font-size:13px;color:#9fb0cf}
+.panel .hd .logo.ph .ic{width:26px;height:26px}
+@media (max-width: 720px){ .feedbackbtn{left:8px;bottom:94px} }
