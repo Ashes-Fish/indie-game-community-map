@@ -378,5 +378,41 @@
     "website": "https://permafrost-echo.com/",
     "logo": "images/logo_冻土回声.jpg",
     "photos": []
+  },
+  {
+    "name": "麦河游",
+    "city": "郑州",
+    "otherCities": "",
+    "founded": "2026",
+    "foundedRaw": "2026.3",
+    "address": "郑州市二七区麦河游",
+    "leader": "WhiteO2",
+    "contact": "微信:whiteo2",
+    "sizeRaw": "200+",
+    "size": 200,
+    "intro": "河南独立游戏开发者社群",
+    "wechatGroup": "通过负责人进群",
+    "qqGroup": "",
+    "website": "",
+    "logo": "images/logo_麦河游.png",
+    "photos": []
+  },
+  {
+    "name": "幻境映雪交互设计协会",
+    "city": "济南",
+    "otherCities": "烟台",
+    "founded": "2026",
+    "foundedRaw": "2026.5",
+    "address": "山东建筑大学",
+    "leader": "松毛虫",
+    "contact": "微信:bigchatcat",
+    "sizeRaw": "~100",
+    "size": 100,
+    "intro": "山东建筑大学数智爱好者聚集地。围绕游戏艺术等多项数字艺术相关领域开展实践活动",
+    "wechatGroup": "通过负责人进群",
+    "qqGroup": "967060679",
+    "website": "",
+    "logo": "images/logo_幻境映雪交互设计协会.png",
+    "photos": []
   }
 ]

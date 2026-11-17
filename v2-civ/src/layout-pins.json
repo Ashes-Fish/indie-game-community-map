@@ -12,7 +12,9 @@
     "chengdu": 2,
     "chongqing": 2,
     "shenzhen": 2,
-    "shenyang": 2
+    "shenyang": 2,
+    "c410100": 2,
+    "c370100": 2
   },
   "communities": {
     "c1jkfr4x": [
@@ -98,6 +100,14 @@
     "dongtu": [
       166,
       -67
+    ],
+    "c1efp1ci": [
+      57,
+      24
+    ],
+    "c1thl8y3": [
+      92,
+      0
     ]
   }
 }
