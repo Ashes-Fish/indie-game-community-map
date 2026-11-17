@@ -21,7 +21,7 @@ URL 参数：不带参数从全国视角开始；`?region=chengyu` 从某地块�
 - 海岸、湖泊、江河：Terrarium 水深 + Natural Earth 10m（land / lakes / rivers），烘焙成水域距离场 `water.png`。长三角的运河、黄浦江、西湖为手绘近似。
 - 全国纸面：省界、国界、九段线和全部地级城市驻地来自 DataV.GeoAtlas（高德数据），江河湖泊来自 Natural Earth，山形和海面来自 Terrarium z6，烘焙成 `public/data/china/` 和 `src/data/china-cities.json`，浏览器里画成古舆图。**正式公开前要按《全国版规划方案》3.2 节换成标准地图数据。**
 - 重新烘焙（需要 numpy、Pillow、scipy；没有 Python 时可用 Blender 自带的 Python，见 `assets-src/README.md`）：新增社群后先跑 `node scripts/patches.mjs`（按社群城市自动算地块：320 公里内的城市连成一块，外扩 150 公里），再跑 `python scripts/bake_patch.py [地块…]` 烘地块（自动下载高程和 Natural Earth）；`python scripts/bake_china.py` 烘全国纸面数据。原始数据放 `bake-raw/`，不进仓库。地块的名字沿用 `src/data/regions.json`（按中心就近匹配），新地区可在那里加一行起名。
-- 社团：直接读仓库 `site/data/communities.json`，logo 由 `site/images/` 缩成 256px webp。
+- 社团：直接读仓库 `site/data/communities.json`，logo 是统计表里社团自己交的图（`site/images/`），由 `scripts/logos.py` 缩成 256px webp 放进 `public/logos/<key>.webp`；加了新社团或换了 logo 后重跑一次。
 
 ## 画面环境（P2）
 

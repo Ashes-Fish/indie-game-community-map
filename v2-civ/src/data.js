@@ -45,7 +45,7 @@ const META = {
   '创乐坊': { key: 'chuanglefang', model: { kind: 'builtin', style: 'paifang' }, prefDir: 2, logo: 'chuanglefang' },
   '存档点': { key: 'cundang', model: { kind: 'builtin', style: 'savepoint' }, toward: [118.9, 32.05], logo: null },
   'The Pinewood Lab艺术游戏社区': { key: 'pinewood', model: { kind: 'builtin', style: 'pinewood' }, toward: [118.63, 32.15], logo: 'pinewood', short: 'Pinewood Lab' },
-  '冻土回声': { key: 'dongtu', logo: 'dongtu' },
+  '冻土回声': { key: 'dongtu' },
   // 统计表写的是"上海/纽约"：地图上落在上海，纽约记为其他活动城市
   '纽约大学游戏社': { key: 'nyugame', short: '纽大游戏社' },
 };
@@ -61,7 +61,9 @@ export function normalizeCommunity(r) {
   const key = m.key || r.key || 'c' + strHash(r.name).toString(36);
   const model = m.model || r.model || { kind: 'builtin', style: BUILTIN_STYLES[strHash(r.name) % BUILTIN_STYLES.length] };
   const short = m.short || r.short;
-  return { ...r, ...m, otherCities: res.others.join(' '), key, model, cityId: city.id, logo: m.logo ?? null, short, glyph: [...(short || r.name)][0] };
+  // logo: every community whose record has one (the survey's own image, shrunk by scripts/logos.py to logos/<key>.webp)
+  const logo = m.logo !== undefined ? m.logo : r.logo ? key : null;
+  return { ...r, ...m, otherCities: res.others.join(' '), key, model, cityId: city.id, logo, short, glyph: [...(short || r.name)][0] };
 }
 
 // Append-only order matters: placement walks communities in this order, so new entries never displace old ones.
