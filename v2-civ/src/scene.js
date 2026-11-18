@@ -2,7 +2,7 @@ import * as THREE from 'three';
 // style.css is imported by main.js (shared with the flat fallback, lite.js)
 import { World, loadImage } from './world.js';
 import { CITIES, COMMUNITIES, HUB_CITIES } from './data.js';
-import { PatchTerrain, loadTerrainTextures, makeRippleTexture, makeTerrainMaterial, MAX_OWNERS } from './terrain.js';
+import { PatchTerrain, loadTerrainTextures, loadTerrainTexturesHD, makeRippleTexture, makeTerrainMaterial, MAX_OWNERS } from './terrain.js';
 import { setRenderer } from './assets.js';
 import { CivCamera } from './camera.js';
 import { buildProps } from './props.js';
@@ -252,12 +252,26 @@ async function init() {
   }
   progress(0.88, '正在营建城郭…');
   await terrainReady;
-  // A close start view (?view, ?open, ?region) builds its patch and every program it needs behind the loading bar.
-  // The country view needs none of that to show: the loader lifts at once, and 长三角 is warmed up in the background
-  // (scheduler) while the user looks at the map, before the first zoom-in.
+  // Everything the first minute needs is built behind the loading bar: the patch of a close start view (?view, ?open,
+  // ?region), else 长三角 (its programs cover the other patches, so the first zoom-in has nothing left to compile). This
+  // used to run in the background a few seconds after the country view showed, and stuttered the map the user was
+  // already looking at (8 frames of 60–310 ms on a desktop GPU); a slightly longer loading bar is the better trade.
   const sv = startView();
-  if (sv.d < FAR_D) await warmUp(true);
+  progress(0.9, '正在营建城郭…');
+  await warmUp(true, sv.d >= FAR_D);
+  // every other patch's mid tier (cities, districts, roads, rivers) too, nearest the start view first: each brings
+  // programs of its own (福建's buildings compiled for 600 ms) and was otherwise built during the first fly-in. The
+  // low tier keeps the shorter load and builds them on the way, as before.
+  if (Q.tier !== 'low') {
+    const rest = patches.filter((pa) => !pa.mid).sort((a, b) => rectDist(a.P, sv.x, sv.z) - rectDist(b.P, sv.x, sv.z));
+    for (const [i, pa] of rest.entries()) {
+      progress(0.9 + 0.05 * i / rest.length);
+      await buildMid(pa);
+      pa.mid.visible = false;
+    }
+  }
   progress(0.95, '即将完成…');
+  await settle();
   // window.__dbg.pins() prints the snapshot to commit as src/layout-pins.json after adding communities
   window.__dbg = { scene, cam, shared, paper, frame, buildLog, buildMid, buildNear, timed, renderer, camera, patches, COMMUNITIES, CITIES, select, focusCity, goRegion, REGIONS, perf, stats, Q, NAT_VIEW, pins: () => JSON.stringify(dumpPins(CITIES, COMMUNITIES), null, 2), get post() { return post; } };
   start();
@@ -275,7 +289,7 @@ const mapIsStill = () => {
   const now = performance.now();
   return now - window.__readyAt > WARM_DELAY_MS && now - lastInput > STILL_MS && !cam.fly && Math.abs(cam.goalDist - cam.dist) < cam.dist * 0.01;
 };
-async function warmUp(behindLoader = false) {
+async function warmUp(behindLoader = false, keepReveal = false) {
   warmed = true;
   const v = startView();
   const near = v.d < FAR_D && patches.find((p) => p.P === patchAt(v.x, v.z, -400));
@@ -285,17 +299,17 @@ async function warmUp(behindLoader = false) {
   if (!pa.near) await buildNear(pa);
   // the street-level render below resizes the canvas: in the background it runs at the start of a frame, which then
   // draws the canvas again before it is shown
-  if (behindLoader) warmRender(pa, true);
+  if (behindLoader) warmRender(pa, true, keepReveal);
   else await new Promise((res) => { warmQueue = () => { warmRender(pa, false); res(); }; });
 }
 let warmQueue = null;
 // the shadow-depth variants and the close-up post passes (screen-space AO) compile on first use: render the
 // patch once from street level, with the user's camera put back afterwards
-function warmRender(pa, behindLoader) {
+function warmRender(pa, behindLoader, keepReveal = false) {
   const saved = { x: cam.target.x, z: cam.target.z, d: cam.dist, goal: cam.goalDist, fly: cam.fly };
   const city = pa.cities[0];
   cam.fly = null; cam.target.set(city.x, 0, city.z + 4); cam.dist = cam.goalDist = 60; cam.apply();
-  if (behindLoader) { pa.revealT = T_REVEAL; pa.buildT = 0; }   // starting on this patch: no reveal animation
+  if (behindLoader && !keepReveal) { pa.revealT = T_REVEAL; pa.buildT = 0; }   // starting on this patch: no reveal animation
   // fine terrain chunks around the city: all of them behind the loader; in the background only the nearest one (it is
   // enough to compile the chunk programs and shadow variants), the rest are built a few per frame as usual
   const budget = behindLoader ? 2000 : 1;
@@ -321,6 +335,50 @@ function warmRender(pa, behindLoader) {
   farOn = null;
   for (const pp of patches) pp.terrain.update(camera, cam.dist > FAR_D, 0);   // back to the user's view
   if (behindLoader) growDistricts(pa);
+}
+
+// Still behind the loading bar: draw the start view for real until its first frames are cheap. The first draws upload
+// textures and finish programs (a 400 ms frame on a desktop GPU, longer on phones) and the national paper tiles for
+// the view are painted; the user sees none of it. Animation clocks are put back afterwards, so the land still rises
+// out of the paper once the loader lifts. Gives up after a few seconds on a very slow device rather than hang.
+async function settle() {
+  const keep = patches.map((pa) => [pa.revealT, pa.buildT]), t0 = performance.now(), time0 = shared.uniforms.uTime.value;
+  const step = async (dt = 0.016) => {
+    const f0 = performance.now();
+    last = f0 - dt * 1000;
+    frame();
+    patches.forEach((pa, i) => { [pa.revealT, pa.buildT] = keep[i]; });
+    await new Promise((r) => requestAnimationFrame(() => r()));
+    return performance.now() - f0;
+  };
+  const show = (x, z, d) => { cam.fly = null; cam.target.set(x, 0, z); cam.dist = cam.goalDist = d; cam.apply(); return step(); };
+  // paper tiles still being painted for the current view (and where the camera is heading): wait for them, briefly
+  const paperDone = async (ms) => { const t = performance.now(); while ((paper.pending.size || paper.wanted.size) && performance.now() - t < ms) await step(); };
+  // first the views a first visit goes to (each patch from above, a city close up): their first draw uploads the
+  // buildings' vertex buffers and builds the finer terrain chunks, which otherwise stalled the first fly-in
+  if (Q.tier !== 'low') {
+    for (const pa of patches) if (pa.mid) { const o = patchOverview(pa.P); await show(o.x, o.z, o.d); await show(o.x, o.z, o.d); }
+    // then the most common first trip for real, country → 杭州 and back: it paints the national paper tiles along the
+    // way (each finished tile stalled the first real flight for 50–250 ms) and builds the terrain chunks it passes
+    const hz = CITIES.find((c) => c.id === 'hangzhou') || CITIES[0];
+    const v0 = startView();
+    for (const [k, [x, z, d, sec]] of [[hz.x, hz.z + 4, 70, 1.4], [v0.x, v0.z, v0.d, 2.2]].entries()) {
+      cam.flyTo(x, z, d, sec, 0);
+      for (let i = 0; i < 400 && cam.fly; i++) { await step(0.045); progress(0.95 + 0.02 * k + 0.02 * Math.min(1, cam.fly ? cam.fly.t / cam.fly.dur : 1)); }
+      await paperDone(mobile ? 2500 : 1200);
+    }
+  }
+  progress(0.99, '即将完成…');
+  const v = startView();
+  let n = 0, cheap = 0;
+  while (performance.now() - t0 < (mobile ? 12000 : 8000)) {
+    const ms = await show(v.x, v.z, v.d);
+    n++;
+    cheap = ms < 40 ? cheap + 1 : 0;
+    if (n >= 4 && cheap >= 3 && !paper.pending.size && !paper.step()) break;
+  }
+  shared.uniforms.uTime.value = time0;
+  buildLog.push(['settle', Math.round(performance.now() - t0), n]);
 }
 
 // ---------- detail levels (M2) ----------
@@ -714,6 +772,15 @@ function start() {
     }
   }
   renderer.setAnimationLoop(qs.get('idle') === '0' ? frame : loop);
+  // the finer painted ground (1024 px layers, public/tex/terrain-hd.webp, about 1.4 MB): fetched after the map shows,
+  // swapped in when decoded. The first load uses the 512 px set; the low tier keeps it.
+  if (Q.tier !== 'low') setTimeout(() => loadTerrainTexturesHD(BASE + 'tex/terrain-hd.webp', renderer).then(({ texture, step }) => {
+    const up = () => {
+      if (!step()) { requestAnimationFrame(up); return; }
+      const old = shared.uniforms.uTerr.value; shared.uniforms.uTerr.value = texture; old.dispose(); wake();
+    };
+    requestAnimationFrame(up);
+  }).catch((e) => console.warn('terrain-hd', e)), 1500);
   if (qs.has('bench')) {
     const tReady = performance.now();
     let n = 0; const t0 = performance.now();

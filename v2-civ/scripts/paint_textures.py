@@ -1,5 +1,6 @@
-"""程序化绘制地表手绘风无缝贴图 → public/tex/terrain.webp
-6 层竖排（每层 512×512，RGB = 颜色，A = 高度，用于高度混合）：
+"""程序化绘制地表手绘风无缝贴图 → public/tex/terrain-hd.webp（每层 1024²，进入画面后后台换上）
+                                 + public/tex/terrain.webp（同一张缩到 512²，首屏和低档设备用）
+6 层竖排（RGB = 颜色，A = 高度，用于高度混合）：
 0 草地  1 水田  2 林地  3 山石  4 沙滩  5 雪地
 用法：python3 scripts/paint_textures.py [--preview]（--preview 另存 2×2 平铺预览到 /tmp/igcm-tex/）
 所有噪声用 FFT 生成（天然周期），笔触绕边重画，所以四方连续。
@@ -11,9 +12,11 @@ from PIL import Image, ImageDraw
 from scipy.spatial import cKDTree
 
 ROOT = Path(__file__).resolve().parent.parent
-N = 1024          # 绘制分辨率（输出时缩到 512，相当于抗锯齿）
-OUT = 512
+N = 2048          # 绘制分辨率（输出时缩到 1024，相当于抗锯齿）
+OUT = 1024        # 输出 1024：近景能看清笔触（原 512）
 QUALITY = 62
+HD_QUALITY, HD_ALPHA = 50, 40
+S = N / 1024      # 笔触尺寸按绘制分辨率缩放（尺寸写的是 1024 画布上的像素）
 
 
 def noise(lo, hi, seed, beta=1.0, n=N):
@@ -49,8 +52,9 @@ def poster(x, levels, soft=0.25):
 
 def shade(h, k=1.0, light=(-0.6, -0.8)):
     """由高度场算假光照（左上来光）"""
-    dx = (np.roll(h, -2, 1) - np.roll(h, 2, 1)) * 0.25
-    dy = (np.roll(h, -2, 0) - np.roll(h, 2, 0)) * 0.25
+    k2 = int(2 * S)
+    dx = (np.roll(h, -k2, 1) - np.roll(h, k2, 1)) * 0.25 / S
+    dy = (np.roll(h, -k2, 0) - np.roll(h, k2, 0)) * 0.25 / S
     return np.clip(1 + k * (dx * light[0] + dy * light[1]) * N / 64, 0.55, 1.45)
 
 
@@ -68,11 +72,11 @@ def strokes(img, color_at, n, seed, length, width, angle_at=None, jitter=0.08, s
     """在 img 上画 n 个笔触；颜色从 color_at(x,y) 取，带抖动"""
     r = np.random.default_rng(seed)
     d = ImageDraw.Draw(img)
-    for _ in range(n):
+    for _ in range(int(n * S * S)):
         x, y = r.random() * N, r.random() * N
         ix, iy = int(x) % N, int(y) % N
         if mask is not None and r.random() > mask[iy, ix]: continue
-        L = r.uniform(*length); W = r.uniform(*width)
+        L = r.uniform(*length) * S; W = r.uniform(*width) * S
         a = angle_at(ix, iy) if angle_at else r.random() * np.pi
         a += r.normal(0, 0.25)
         c = color_at(ix, iy) * (1 + r.normal(0, jitter, 3) * 0.6 + r.normal(0, jitter))
@@ -124,10 +128,10 @@ def grass():
     c *= shade(h, 0.5)[..., None]
     # 小花
     r = np.random.default_rng(14); d = ImageDraw.Draw(img := to_img(c))
-    for _ in range(260):
+    for _ in range(int(260 * S * S)):
         x, y = r.random() * N, r.random() * N
         col = [(244, 238, 214), (246, 206, 70), (236, 150, 160)][r.integers(3)]
-        s = r.uniform(2.2, 3.6)
+        s = r.uniform(2.2, 3.6) * S
         wrap_draw(d, [(x - s, y), (x, y - s), (x + s, y), (x, y + s)], col)
     return from_img(img), h
 
@@ -136,7 +140,7 @@ def paddy():
     # 一排排秧苗（纹理里横向成行），行间露水；A 通道 = 秧苗覆盖
     n1, n2 = noise(2, 8, 21), noise(10, 40, 22)
     rows = 40                       # 每张图 40 行
-    yy = (np.arange(N)[:, None] + noise(1, 3, 23) * 6) / N * rows
+    yy = (np.arange(N)[:, None] + noise(1, 3, 23) * 6 * S) / N * rows
     rowm = sstep(0.18, 0.42, 0.5 - np.abs((yy % 1) - 0.5)) * np.ones((1, N))
     base = lerp(hexc('#5d9a33'), hexc('#8fbd45'), sstep(-1.5, 1.5, n1 + n2 * 0.4))
     water = lerp(hexc('#5a8c84'), hexc('#8ab8b0'), sstep(-1, 1.5, n2))
@@ -147,19 +151,19 @@ def paddy():
     # 每行上的秧苗簇：几片向上张开的叶
     for row in range(rows):
         y0 = (row + 0.5) / rows * N
-        x = r.random() * 8
+        x = r.random() * 8 * S
         while x < N:
             ix = int(x) % N; iy = int(y0) % N
             col0 = base[iy, ix]
             for k in range(4):
                 a = -np.pi / 2 + r.normal(0, 0.55)
-                L, W = r.uniform(7, 13), r.uniform(2, 3.5)
-                cx, cy = x + r.normal(0, 1.2), y0 + r.normal(0, 1.5) + 2
+                L, W = r.uniform(7, 13) * S, r.uniform(2, 3.5) * S
+                cx, cy = x + r.normal(0, 1.2) * S, y0 + (r.normal(0, 1.5) + 2) * S
                 col = tuple(int(v) for v in np.clip(col0 * (1 + r.normal(0, 0.09)) * (1.1 if k == 0 else 0.92) * 255, 0, 255))
                 ca, sa = np.cos(a), np.sin(a)
                 pts = [(0, 0), (L * 0.45, -W * 0.5), (L, 0), (L * 0.45, W * 0.5)]
                 wrap_draw(d, [(cx + px * ca - py * sa, cy + px * sa + py * ca) for px, py in pts], col)
-            x += r.uniform(9, 14)
+            x += r.uniform(9, 14) * S
     c = from_img(img)
     h = np.clip(rowm * 0.75 + sstep(-1, 1, n2) * 0.2 + (c.mean(2) - water.mean(2)) * 0.8, 0, 1)
     c *= shade(h, 0.35)[..., None]
@@ -205,8 +209,8 @@ def rock():
     h = np.clip(bevel * 0.75 + sstep(-2, 2, n2 + n3 * 0.4) * 0.25, 0, 1)
     lit = shade(h, 1.0)
     c *= poster(np.clip((lit - 0.55) / 0.9, 0, 1), 4, 0.35)[..., None] * 0.4 + 0.8
-    below = np.roll(crack, 7, 0) * (1 - crack)      # 裂隙下方阴影（岩檐）
-    above = np.roll(crack, -3, 0) * (1 - crack)     # 上沿亮边
+    below = np.roll(crack, int(7 * S), 0) * (1 - crack)      # 裂隙下方阴影（岩檐）
+    above = np.roll(crack, -int(3 * S), 0) * (1 - crack)     # 上沿亮边
     c = lerp(c, c * 0.62, np.clip(below, 0, 1) * 0.8)
     c = lerp(c, c * 1.18, np.clip(above, 0, 1) * 0.6)
     c = lerp(c, hexc('#3a352e'), crack * 0.85)
@@ -229,9 +233,9 @@ def sand():
     c *= 1 + n3[..., None] * 0.045
     img = to_img(c)
     r = np.random.default_rng(55); d = ImageDraw.Draw(img)
-    for _ in range(420):   # 小石子/贝壳
+    for _ in range(int(420 * S * S)):   # 小石子/贝壳
         x, y = r.random() * N, r.random() * N
-        s = r.uniform(2, 4.5)
+        s = r.uniform(2, 4.5) * S
         col = tuple(int(v) for v in np.clip(hexc(['#b39a72', '#f6efe0', '#9a8466'][r.integers(3)]) * 255, 0, 255))
         wrap_draw(d, [(x + np.cos(t) * s, y + np.sin(t) * s * 0.7) for t in np.linspace(0, 6.28, 7, endpoint=False)], col)
     return from_img(img), h
@@ -265,10 +269,19 @@ def main():
         print(nm, 'mean rgb', np.asarray(im)[..., :3].reshape(-1, 3).mean(0).round(1))
     strip = Image.new('RGBA', (OUT, OUT * len(tiles)))
     for i, t in enumerate(tiles): strip.paste(t, (0, i * OUT))
-    out = ROOT / 'public/tex/terrain.webp'
+    out = ROOT / 'public/tex/terrain-hd.webp'
     out.parent.mkdir(parents=True, exist_ok=True)
-    strip.save(out, 'WEBP', quality=QUALITY, alpha_quality=45, method=6, exact=True)
+    strip.save(out, 'WEBP', quality=HD_QUALITY, alpha_quality=HD_ALPHA, method=6, exact=True)
     print(f'→ {out.relative_to(ROOT)}  {out.stat().st_size / 1024:.0f} KB')
+    # 首屏用的 512² 版：同一张图缩小（RGB 和 A 分开缩，同上）
+    small = Image.new('RGBA', (512, 512 * len(tiles)))
+    for i, t in enumerate(tiles):
+        rgb = t.convert('RGB').resize((512, 512), Image.LANCZOS)
+        al = t.getchannel('A').resize((512, 512), Image.LANCZOS)
+        rgb.putalpha(al); small.paste(rgb, (0, i * 512))
+    out2 = ROOT / 'public/tex/terrain.webp'
+    small.save(out2, 'WEBP', quality=QUALITY, alpha_quality=45, method=6, exact=True)
+    print(f'→ {out2.relative_to(ROOT)}  {out2.stat().st_size / 1024:.0f} KB')
     if '--preview' in sys.argv:
         pv = Path('/tmp/igcm-tex'); pv.mkdir(exist_ok=True)
         for t, nm in zip(tiles, names):

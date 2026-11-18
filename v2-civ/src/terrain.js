@@ -23,6 +23,42 @@ export async function loadTerrainTextures(url) {
   return t;
 }
 
+// The finer layer set (terrain-hd.webp) swapped in after the map shows, without a stall: decoded to raw pixels off the
+// main thread (createImageBitmap + OffscreenCanvas in a worker; a browser without them decodes here), then uploaded one
+// layer per call of step() — each layer is about 4 MB, the whole set in one call held a frame for 160 ms. step()
+// returns true once every layer is on the GPU; until then the 512 px set stays in use.
+export async function loadTerrainTexturesHD(url, renderer) {
+  const src = `onmessage = async (e) => {
+    const b = await (await fetch(e.data)).blob();
+    const im = await createImageBitmap(b, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+    const c = new OffscreenCanvas(im.width, im.height).getContext('2d', { willReadFrequently: true });
+    c.drawImage(im, 0, 0);
+    const d = c.getImageData(0, 0, im.width, im.height).data;
+    postMessage({ w: im.width, h: im.height, d }, [d.buffer]);
+  };`;
+  let px;
+  try {
+    const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    px = await new Promise((res, rej) => { w.onmessage = (e) => { w.terminate(); res(e.data); }; w.onerror = rej; w.postMessage(new URL(url, location.href).href); });
+  } catch (e) {
+    const img = await loadImage(url);
+    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(img, 0, 0);
+    px = { w: img.width, h: img.height, d: g.getImageData(0, 0, img.width, img.height).data };
+  }
+  const n = Math.round(px.h / px.w);
+  const t = new THREE.DataArrayTexture(new Uint8Array(px.d.buffer), px.w, px.w, n);
+  t.format = THREE.RGBAFormat; t.type = THREE.UnsignedByteType;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true; t.anisotropy = 4;
+  // first upload allocates the whole array (texStorage3D) and copies layer 0 only; then one layer per step()
+  let next = 0;
+  const step = () => { t.addLayerUpdate(next++); t.needsUpdate = true; renderer.initTexture(t); return next >= n; };
+  return { texture: t, step };
+}
+
 // Tileable water ripple map built at load time (no download): RG = normal xy, B = foam breakup, A = height.
 export function makeRippleTexture(n = 256) {
   const R = rng(77);
@@ -89,11 +125,11 @@ const vec3 C_DIST  = ${S('#a39674')};
 const vec3 C_SAND  = ${S('#dfcc90')};
 const vec3 C_ROCK  = ${S('#8a8274')};
 const vec3 C_PAPER = ${S('#e4d0a4')};
-const vec3 M_GRASS = ${M(97.4, 149.9, 50.9)};
-const vec3 M_PADDY = ${M(111.7, 161.8, 103.0)};
-const vec3 M_FOREST = ${M(68.3, 109.6, 42.4)};
-const vec3 M_ROCK = ${M(127.2, 119.6, 103.8)};
-const vec3 M_SAND = ${M(218.3, 203.3, 152.4)};
+const vec3 M_GRASS = ${M(94.0, 142.1, 49.5)};
+const vec3 M_PADDY = ${M(112.2, 162.4, 105.5)};
+const vec3 M_FOREST = ${M(77.6, 116.5, 44.8)};
+const vec3 M_ROCK = ${M(127.6, 120.0, 104.1)};
+const vec3 M_SAND = ${M(217.7, 202.7, 152.4)};
 const vec3 M_SNOW = ${M(213.1, 222.0, 234.8)};
 
 vec2 gdx, gdy; // screen derivatives of world xz, taken once in uniform control flow
@@ -105,6 +141,14 @@ vec4 layer2(float L, vec2 p, float tile){
   vec2 q = mat2(0.8, -0.6, 0.6, 0.8) * p + 13.7;
   vec4 b = textureGrad(uTerr, vec3(q / (tile * 3.3), L), mat2(0.8, -0.6, 0.6, 0.8) * gdx / (tile * 3.3), mat2(0.8, -0.6, 0.6, 0.8) * gdy / (tile * 3.3));
   a = mix(a, b, 0.32);
+  // close up: a finer, rotated octave of the same strokes, so a texel never covers several pixels at street level
+  float fine = 1.0 - smoothstep(0.012, 0.05, max(length(gdx), length(gdy)) / tile * 4.0);
+  if (fine > 0.01) {
+    vec2 q2 = mat2(0.6, 0.8, -0.8, 0.6) * p - 5.3;
+    vec4 c = textureGrad(uTerr, vec3(q2 / (tile * 0.31), L), mat2(0.6, 0.8, -0.8, 0.6) * gdx / (tile * 0.31), mat2(0.6, 0.8, -0.8, 0.6) * gdy / (tile * 0.31));
+    a.rgb = mix(a.rgb, a.rgb * (0.78 + 0.44 * c.a), 0.55 * fine);
+    a.a = mix(a.a, a.a * 0.7 + c.a * 0.3, fine);
+  }
 #endif
   return a;
 }
