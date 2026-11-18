@@ -14,6 +14,11 @@
 | 10 | 卢德工作室 | 成都 | `9150c28b11feace24db759265c34da11.png` | `logos/cx0pdrl.webp` |  |
 | 11 | The Pinewood Lab艺术游戏社区 | 南京 | `d0eeed67753f31e46e0c0b8edbb6ea3b.png` | `logos/pinewood.webp` |  |
 | 12 | 游戏奇点gamezone | 深圳 | `a47bfc2b5bb3736d52cfb9945e49ae8a.png` | `logos/cfscrh4.webp` | 备注栏另附活动图：65d6dd7d28a843fe16e8aa16a803444c.png（不是 logo） |
-| 13 | 冻土回声 | 沈阳 | （不在文件夹里，只在表格里） | `logos/dongtu.webp` | 图片文件夹里没有，logo 只嵌在统计表里（第 23 行），已取出存为 site/images/logo_冻土回声.jpg |
+| 13 | 冻土回声 | 沈阳 | `63c5ff441d39390c447c707a3891b76a.jpg` | `logos/dongtu.webp` |  |
+| 14 | 麦河游 | 郑州 | `2500ee3965797e4f239f1cca894181a4.png` | `logos/c1efp1ci.webp` |  |
+| 15 | 幻境映雪交互设计协会 | 济南 | `1d7087052802617aeaadebc97fa061db.png` | `logos/c1thl8y3.webp` |  |
+| 16 | Gamer Union游戏设计社团 | 济南 | `1d8de4cc9cd347e7cd3e0988de4bd2ff.jpg` | `logos/ci1rlmk.webp` |  |
+| 17 | 鹏游港湾 / BIG | 深圳 | `596dd4bc0ea7ffff65ee8a26a0a7afc7.png` | `logos/c5bqg0w.webp` |  |
+| 18 | ATMOSPHERE漫元领域 | 沈阳 | `306e21342bf37c0c3175372305782c8b.png` | `logos/cgbn8h4.webp` |  |
 
-**没交 logo（地图上显示首字）**：爱拼游戏社（福建/厦门）、地道游击队（北京）、游戏哨子（西安）、西柚独立游戏社（西安）、GamerNexus（深圳）、存档点（南京）、AMOS（沈阳）、纽约大学游戏社（上海）
+**没交 logo（地图上显示首字）**：爱拼游戏社（福建/厦门）、地道游击队（北京高校独立游戏制作人联盟）（北京）、游戏哨子（西安）、西柚独立游戏社（西安）、GamerNexus（深圳）、存档点（南京）、AMOS（沈阳）、纽约大学游戏社（上海）、武汉独立游戏联盟（武汉）

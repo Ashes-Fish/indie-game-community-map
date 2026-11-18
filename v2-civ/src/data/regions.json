@@ -1,10 +1,11 @@
 {
   "yrd": {"name": "长三角", "lon0": 120.1, "lat0": 31.1, "hmax": 1900},
-  "jingjin": {"name": "京津", "lon0": 116.8, "lat0": 39.5, "hmax": 2500.0},
-  "chengyu": {"name": "成渝", "lon0": 105.3, "lat0": 30.05, "hmax": 5100.0},
-  "shenzhen": {"name": "珠三角", "lon0": 113.8, "lat0": 22.9, "hmax": 1600.0},
-  "xian": {"name": "关中", "lon0": 108.94, "lat0": 34.34, "hmax": 3200.0},
-  "shenyang": {"name": "辽沈", "lon0": 123.43, "lat0": 41.8, "hmax": 1900.0},
-  "fujian": {"name": "闽南闽东", "lon0": 118.7, "lat0": 25.3, "hmax": 3400.0},
-  "zhengzhou": {"name":"中原","lon0":113.65,"lat0":34.75,"hmax":null}
+  "jingjin": {"name": "京津", "lon0": 116.8, "lat0": 39.5, "hmax": 2500},
+  "chengyu": {"name": "成渝", "lon0": 105.3, "lat0": 30.05, "hmax": 5100},
+  "shenzhen": {"name": "珠三角", "lon0": 113.8, "lat0": 22.9, "hmax": 1600},
+  "xian": {"name": "关中", "lon0": 108.94, "lat0": 34.34, "hmax": 3200},
+  "shenyang": {"name": "辽沈", "lon0": 123.43, "lat0": 41.8, "hmax": 1900},
+  "fujian": {"name": "闽南闽东", "lon0": 118.7, "lat0": 25.3, "hmax": 3400},
+  "zhengzhou": {"name": "中原", "lon0": 113.65, "lat0": 34.75, "hmax": null},
+  "wuhan": {"name": "武汉", "lon0": 114.3, "lat0": 30.6, "hmax": null}
 }

@@ -48,6 +48,10 @@ const META = {
   '冻土回声': { key: 'dongtu' },
   // 统计表写的是"上海/纽约"：地图上落在上海，纽约记为其他活动城市
   '纽约大学游戏社': { key: 'nyugame', short: '纽大游戏社' },
+  'Gamer Union游戏设计社团': { short: 'Gamer Union' },
+  '鹏游港湾 / BIG': { short: '鹏游港湾' },
+  'ATMOSPHERE漫元领域': { short: '漫元领域' },
+  '武汉独立游戏联盟': { short: '武汉独游联盟' },
 };
 
 function strHash(s) { let h = 2166136261; for (const ch of s) h = Math.imul(h ^ ch.codePointAt(0), 16777619); return h >>> 0; }
