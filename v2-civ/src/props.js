@@ -110,8 +110,8 @@ export async function buildProps(world, shared, Q, keepOut) {
   const group = new THREE.Group();
   const mat = fogPatch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true }), shared);
   const depth = fogPatch(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }), shared);
-  const matTree = fogPatch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true }), shared, 0.66, 0.82, true);
-  const depthTree = fogPatch(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }), shared, 0.66, 0.82, true);
+  const matTree = fogPatch(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true }), shared, 0.66, 0.82);   // no wind sway (user, 2026-11-18)
+  const depthTree = fogPatch(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }), shared, 0.66, 0.82);
   const smallVis = { value: 1 };
   const matSmall = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true });
   matSmall.userData.vis = smallVis; fogPatch(matSmall, shared);
@@ -152,14 +152,14 @@ export async function buildProps(world, shared, Q, keepOut) {
       const x = ccx + (R() + R() - 1) * spread, z = ccz + (R() + R() - 1) * spread;
       if (!free(x, z)) continue;
       if (b === BIOME.MOUNTAIN && world.relM(x, z) > 900) continue;
-      const y = world.heightY(x, z);
+      const y = world.meshY(x, z);
       const isC = R() < conifP;
       const s = (0.8 + R() * 0.5) * (b === BIOME.HILLS || b === BIOME.MOUNTAIN ? 1.0 : 0.9);
       const tint = isC ? CONIF[(R() * CONIF.length) | 0] : (R() < 0.035 ? AUT[(R() * AUT.length) | 0] : GREENS[(R() * GREENS.length) | 0]);
       (isC ? lists.conifer : lists.broad).push({ x, y: y - 0.05, z, s, ry: R() * 6.28, c: tint });
       if (R() < 0.35) {
         const bx = x + (R() - 0.5) * 1.2, bz = z + (R() - 0.5) * 1.2;
-        if (free(bx, bz)) lists.bush.push({ x: bx, y: world.heightY(bx, bz) - 0.03, z: bz, s: 0.7 + R() * 0.6, ry: R() * 6.28, c: GREENS[(R() * GREENS.length) | 0] });
+        if (free(bx, bz)) lists.bush.push({ x: bx, y: world.meshY(bx, bz) - 0.03, z: bz, s: 0.7 + R() * 0.6, ry: R() * 6.28, c: GREENS[(R() * GREENS.length) | 0] });
       }
     }
     // villages: rows of white-wall houses near water
@@ -172,7 +172,7 @@ export async function buildProps(world, shared, Q, keepOut) {
         const x = vx + Math.cos(ry) * along + Math.sin(ry) * across + (R() - 0.5) * 0.15;
         const z = vz - Math.sin(ry) * along + Math.cos(ry) * across + (R() - 0.5) * 0.15;
         if (!free(x, z, 1)) continue;
-        lists.house.push({ x, y: world.heightY(x, z) - 0.02, z, s: 0.95 + R() * 0.3, ry, c: '#ffffff', sy: R() < 0.25 ? 1.45 : 1 });
+        lists.house.push({ x, y: world.meshY(x, z) - 0.02, z, s: 0.95 + R() * 0.3, ry, c: '#ffffff', sy: R() < 0.25 ? 1.45 : 1 });
       }
     }
     // sculpted peaks
@@ -188,7 +188,7 @@ export async function buildProps(world, shared, Q, keepOut) {
         if (!free(x, z, 2)) continue;
         used.push([x, z]);
         const hh = 2.2 + Math.min(e, 1600) / 1600 * 3.2 + R() * 0.8;
-        lists['peak' + ((R() * 3) | 0)].push({ x, y: world.heightY(x, z) - 0.6, z, s: 1.5 + R() * 0.7, sy: hh, ry: R() * 6.28, c: '#ffffff' });
+        lists['peak' + ((R() * 3) | 0)].push({ x, y: world.meshY(x, z) - 0.6, z, s: 1.5 + R() * 0.7, sy: hh, ry: R() * 6.28, c: '#ffffff' });
       }
     }
   }

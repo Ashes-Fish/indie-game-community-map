@@ -204,6 +204,7 @@ const FRAG_MAIN = /* glsl */`
   float rough = 0.9;
   if (rev > 0.001) {
   vec3 nT = normalize(texture2D(uNormalTex, uvH).xyz * 2.0 - 1.0);
+  tNT = nT;
   float hM = vH0 > 0.0 ? 1000.0 * pow(vH0 / EXAG, 1.0 / EXPO) : 0.0;
 
   // ---- hex lookup ----
@@ -277,7 +278,7 @@ const FRAG_MAIN = /* glsl */`
     wet = max(wet, pond);
   }
 
-  // farmland: paddies with rows that follow each plot, rippling in the wind
+  // farmland: paddies with rows that follow each plot (still: no wind ripple)
   if (abs(own - 5.0) < 0.5) {
     float fade = smoothstep(0.42, 0.6, vnoise(p * 0.22 + ha * 3.7) * 0.75 + edgeD / APO * 0.55) * smoothstep(0.25, 0.9, -sdf);
     if (fade > 0.01) {
@@ -288,8 +289,6 @@ const FRAG_MAIN = /* glsl */`
       vec3 fcol = fc * rice;
       vec3 flooded = mix(${S('#4f8f8c')} * (0.9 + 0.2 * m2), fc * rice, smoothstep(0.5, 0.85, hgt(t)) * detail * 0.8);
       fcol = mix(fcol, flooded, w2);
-      float wave = sin(dot(p, vec2(0.62, 0.36)) * 1.6 - uTime * 1.7 + vnoise(p * 0.32) * 5.0);
-      fcol *= 1.0 + 0.085 * wave * (1.0 - w2) * (0.4 + 0.6 * detail);
       fcol = mix(fcol, ${S('#7d8a3c')}, dk);
       fcol = mix(fcol, mix(col, fcol, 0.5), smoothstep(0.1, 0.3, fw));   // far away: fields melt into the land, no hex blotches
       col = mix(col, fcol, fade);
@@ -457,9 +456,13 @@ export function makeTerrainMaterial(shared, mobile) {
         vLift = liftV;`);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>\n${FRAG_PARS}`)
-      .replace('#include <color_fragment>', `#include <color_fragment>\nfloat tRough; vec3 tN; vec3 tEmis;\n${FRAG_MAIN}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>\nfloat tRough; vec3 tN; vec3 tEmis; vec3 tNT = vec3(0.0, 1.0, 0.0);\n${FRAG_MAIN}`)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = tRough;')
-      .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(tN, 0.0)).xyz);')
+      // the mesh's own small relief (World.meshY, street-level chunks) on top of the baked normal: the vertex normal's
+      // difference from the baked one, faded with distance like the other fine detail
+      .replace('#include <normal_fragment_maps>', `vec3 nMesh = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
+        vec3 tNr = normalize(tN + (nMesh - tNT) * 0.85 * (1.0 - smoothstep(60.0, 160.0, uCamDist)));
+        normal = normalize((viewMatrix * vec4(tNr, 0.0)).xyz);`)
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += tEmis;');
   };
   return mat;
@@ -487,7 +490,7 @@ function gridGeometry(world, x0, z0, x1, z1, step, skirt = 0) {
   const pos = new Float32Array((nx * nz + ring) * 3);
   for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
     const x = x0 + i * sx, z = z0 + j * sz, k = (j * nx + i) * 3;
-    pos[k] = x; pos[k + 1] = world.heightY(x, z); pos[k + 2] = z;
+    pos[k] = x; pos[k + 1] = step <= 1.01 ? world.meshY(x, z) : world.heightY(x, z); pos[k + 2] = z;
   }
   const idx = [];
   for (let j = 0; j < nz - 1; j++) for (let i = 0; i < nx - 1; i++) {
@@ -526,7 +529,8 @@ export class PatchTerrain {
     this.world = world;
     this.material = makeTerrainMaterial(shared, lite);
     this.depth = makeTerrainDepthMaterial(shared);
-    this.steps = coarse ? [1.5, 3, 6] : [1, 2, 4];
+    // level 0 is the street-level mesh: 0.5 km on desktop (was 1), 1 km on touch layouts (was 1.5)
+    this.steps = coarse ? [1, 3, 6] : [0.5, 2, 4];
     this.near = [170, 520];     // camera distance (km) below which a chunk uses level 0 / level 1
     this.group = new THREE.Group();
     this.whole = this.mesh(gridGeometry(world, world.x0, world.z0, world.x1, world.z1, coarse ? 8 : 6));

@@ -180,7 +180,7 @@ export function buildWalkers(world, paths, Q) {
           it.s += it.dir * it.sp * dt;
           if (it.s > it.len) { it.s = it.len; it.dir = -1; } else if (it.s < 0) { it.s = 0; it.dir = 1; }
           const [x, z, ry] = at(it);
-          v.set(x, world.heightY(x, z) + 0.06 + (bob ? Math.abs(Math.sin(t * 7 + it.ph)) * 0.025 : 0), z);
+          v.set(x, world.meshY(x, z) + 0.06 + (bob ? Math.abs(Math.sin(t * 7 + it.ph)) * 0.025 : 0), z);
           e.set(0, ry, 0); q.setFromEuler(e); sc.setScalar(k);
           mesh.setMatrixAt(i, m4.compose(v, q, sc));
         });

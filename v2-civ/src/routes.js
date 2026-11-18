@@ -85,7 +85,7 @@ export function buildRivers(world, rivers, shared) {
     const w = r.name === 'canal' ? 0.75 : r.name === 'Huangpu' ? 1.1 : 0.8;
     const { pts } = smoothPath(r.pts, 0.35);
     const keep = pts; // terrain is flat where these run
-    const g = ribbon(keep, w, (x, z) => world.heightY(x, z), 0.07);
+    const g = ribbon(keep, w, (x, z) => world.meshY(x, z), 0.07);
     const m = new THREE.Mesh(g, mat);
     m.renderOrder = 2; m.receiveShadow = true;
     group.add(m);
@@ -136,7 +136,7 @@ export function buildRoads(world, cities, shared) {
     const keep = pts.filter((p) => world.sdf(p.x, p.z) < -0.2);
     // split where the path leaves land
     let seg = [];
-    const flush = () => { if (seg.length > 3) { group.userData.paths.push(seg); const m = new THREE.Mesh(ribbon(seg, 0.3, (x, z) => world.heightY(x, z), 0.05), mat); m.renderOrder = 1; m.receiveShadow = true; group.add(m); } seg = []; };
+    const flush = () => { if (seg.length > 3) { group.userData.paths.push(seg); const m = new THREE.Mesh(ribbon(seg, 0.3, (x, z) => world.meshY(x, z), 0.05), mat); m.renderOrder = 1; m.receiveShadow = true; group.add(m); } seg = []; };
     for (const p of pts) { if (world.sdf(p.x, p.z) < -0.25) seg.push(p); else flush(); }
     flush();
   }
@@ -147,7 +147,7 @@ export function buildTrade(world, from, to, shared) {
   // 常熟 → 上海 along the lowland between them (the waypoints are on the Yangtze's south bank)
   const pts = [[from.x, from.z], ...[[120.9, 31.56], [121.1, 31.42]].map(([a, b]) => toWorld(a, b)), [to.x, to.z]];
   const { curve, pts: sp, len } = smoothPath(pts, 0.3);
-  const yOf = (x, z) => world.heightY(x, z);
+  const yOf = (x, z) => world.meshY(x, z);
   const g = ribbon(sp, 0.55, yOf, 0.16);
   const mat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false,
@@ -227,7 +227,7 @@ export function buildBoats(world, canal) {
       for (const b of list) {
         b.u = (b.u + b.sp * dt + 1) % 1;
         curve.getPointAt(b.u, p); curve.getTangentAt(b.u, t);
-        b.o.position.set(p.x, world.heightY(p.x, p.z) + 0.1, p.z);
+        b.o.position.set(p.x, world.meshY(p.x, p.z) + 0.1, p.z);
         const dir = Math.sign(b.sp);
         b.o.rotation.y = Math.atan2(-t.z * dir, t.x * dir);
         b.o.visible = world.sdf(p.x, p.z) < 0.5;

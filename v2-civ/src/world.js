@@ -19,6 +19,14 @@ async function loadPixels(bytes) {
   return g.getImageData(0, 0, img.width, img.height).data;
 }
 
+// smooth value noise for the mesh relief (World.meshY)
+function vn(x, z) {
+  const xi = Math.floor(x), zi = Math.floor(z), tx = x - xi, tz = z - zi;
+  const u = tx * tx * (3 - 2 * tx), v = tz * tz * (3 - 2 * tz);
+  const a = hash2(xi, zi), b = hash2(xi + 1, zi), c = hash2(xi, zi + 1), d = hash2(xi + 1, zi + 1);
+  return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+}
+
 // One land patch (地块): its baked height / water grids, its window onto the global hex grid and the uniforms its
 // shaders read (the patch-specific values of GLSL_COMMON). Coordinates are national km (config.js).
 export class World {
@@ -102,6 +110,37 @@ export class World {
   elevM(x, z) { return this._bil(this.Hm, this.HW, this.HH, (x - this.x0) / RES_H - 0.5, (z - this.z0) / RES_H - 0.5); }
   sdf(x, z) { return this._bil(this.SDF, this.WW, this.WH, (x - this.x0) / RES_W - 0.5, (z - this.z0) / RES_W - 0.5); }
   sea(x, z) { return this._bil(this.SEA, this.WW, this.WH, (x - this.x0) / RES_W - 0.5, (z - this.z0) / RES_W - 0.5); }
+// Mesh height: the baked grid (0.75 km a pixel, bilinear) plus a little relief of its own, so a fine mesh shows
+  // more than the grid's straight facets: low rolling swells on plains, sharper folds that grow with the hills.
+  // Zero on water, on the levelled city and district ground (flat[] from flatten()) and fading in from the shore.
+  // Shader, hex lookups and buildings keep reading heightY; the relief stays well under a building's footing.
+  meshY(x, z) {
+    const y = this.heightY(x, z);
+    if (!this.flat) return y;
+    const fx = (x - this.x0) / RES_H - 0.5, fz = (z - this.z0) / RES_H - 0.5;
+    const keep = 1 - this._bil(this.flat, this.HW, this.HH, fx, fz);
+    const shore = Math.min(1, Math.max(0, -this.sdf(x, z) - 0.4) / 1.6);
+    const k = keep * shore;
+    if (k <= 0.001) return y;
+    const hill = Math.min(1, y / 2.2);
+    const n1 = vn(x * 0.55, z * 0.55), n2 = vn(x * 1.3 + 17.3, z * 1.3 - 4.1), n3 = vn(x * 2.9 - 8.7, z * 2.9 + 31.1);
+    const ridge = 1 - Math.abs(n2 * 2 - 1);
+    return y + k * ((n1 - 0.5) * 0.07 + (n3 - 0.5) * 0.025 + (ridge - 0.55) * hill * 0.32 + (n3 - 0.5) * hill * 0.09);
+  }
+  // relief on the mesh is cut on everything flatten() levels, with the same falloff
+  markFlat(x, z, r) {
+    const { HW, HH, x0, z0 } = this;
+    if (!this.flat) this.flat = new Float32Array(HW * HH);
+    const i0 = Math.max(0, Math.floor((x - r * 1.8 - x0) / RES_H)), i1 = Math.min(HW - 1, Math.ceil((x + r * 1.8 - x0) / RES_H));
+    const j0 = Math.max(0, Math.floor((z - r * 1.8 - z0) / RES_H)), j1 = Math.min(HH - 1, Math.ceil((z + r * 1.8 - z0) / RES_H));
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+      const px = x0 + (i + 0.5) * RES_H, pz = z0 + (j + 0.5) * RES_H;
+      const t = Math.min(1, Math.max(0, (Math.hypot(px - x, pz - z) - r) / (r * 0.8)));
+      const k = j * HW + i;
+      this.flat[k] = Math.max(this.flat[k], 1 - t * t * (3 - 2 * t));
+    }
+  }
+
   slope(x, z) {
     const e = 0.75;
     const dx = (this.heightY(x + e, z) - this.heightY(x - e, z)) / (2 * e);
