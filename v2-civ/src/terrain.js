@@ -116,21 +116,21 @@ const vec3 C_OCEAN = ${S('#0b3f78')};
 const vec3 C_OCEAN2 = ${S('#123f86')};
 const vec3 C_COAST = ${S('#1db3bd')};
 const vec3 C_LAKE  = ${S('#1fa2b4')};
-const vec3 C_GRASS = ${S('#62922e')};
-const vec3 C_PLAIN = ${S('#a39d3e')};
-const vec3 C_MARSH = ${S('#5b8b55')};
-const vec3 C_WOODG = ${S('#466f2a')};
+const vec3 C_GRASS = ${S('#78ad36')};
+const vec3 C_PLAIN = ${S('#b7b04a')};
+const vec3 C_MARSH = ${S('#62a065')};
+const vec3 C_WOODG = ${S('#4c8a2e')};
 const vec3 C_URBAN = ${S('#8d8466')};
 const vec3 C_DIST  = ${S('#a39674')};
 const vec3 C_SAND  = ${S('#dfcc90')};
 const vec3 C_ROCK  = ${S('#8a8274')};
 const vec3 C_PAPER = ${S('#e4d0a4')};
-const vec3 M_GRASS = ${M(94.0, 142.1, 49.5)};
-const vec3 M_PADDY = ${M(112.2, 162.4, 105.5)};
-const vec3 M_FOREST = ${M(77.6, 116.5, 44.8)};
-const vec3 M_ROCK = ${M(127.6, 120.0, 104.1)};
-const vec3 M_SAND = ${M(217.7, 202.7, 152.4)};
-const vec3 M_SNOW = ${M(213.1, 222.0, 234.8)};
+const vec3 M_GRASS = ${M(125.6, 176.6, 63.9)};
+const vec3 M_PADDY = ${M(127.3, 187.8, 110.9)};
+const vec3 M_FOREST = ${M(84.8, 152.5, 52.3)};
+const vec3 M_ROCK = ${M(138.9, 132.0, 115.2)};
+const vec3 M_SAND = ${M(235.0, 214.7, 159.7)};
+const vec3 M_SNOW = ${M(228.4, 235.9, 245.5)};
 
 vec2 gdx, gdy; // screen derivatives of world xz, taken once in uniform control flow
 vec4 layer(float L, vec2 p, float tile){ return textureGrad(uTerr, vec3(p / tile, L), gdx / tile, gdy / tile); }
@@ -140,15 +140,8 @@ vec4 layer2(float L, vec2 p, float tile){
 #ifndef MOBILE
   vec2 q = mat2(0.8, -0.6, 0.6, 0.8) * p + 13.7;
   vec4 b = textureGrad(uTerr, vec3(q / (tile * 3.3), L), mat2(0.8, -0.6, 0.6, 0.8) * gdx / (tile * 3.3), mat2(0.8, -0.6, 0.6, 0.8) * gdy / (tile * 3.3));
-  a = mix(a, b, 0.32);
-  // close up: a finer, rotated octave of the same strokes, so a texel never covers several pixels at street level
-  float fine = 1.0 - smoothstep(0.012, 0.05, max(length(gdx), length(gdy)) / tile * 4.0);
-  if (fine > 0.01) {
-    vec2 q2 = mat2(0.6, 0.8, -0.8, 0.6) * p - 5.3;
-    vec4 c = textureGrad(uTerr, vec3(q2 / (tile * 0.31), L), mat2(0.6, 0.8, -0.8, 0.6) * gdx / (tile * 0.31), mat2(0.6, 0.8, -0.8, 0.6) * gdy / (tile * 0.31));
-    a.rgb = mix(a.rgb, a.rgb * (0.78 + 0.44 * c.a), 0.55 * fine);
-    a.a = mix(a.a, a.a * 0.7 + c.a * 0.3, fine);
-  }
+  // the cartoon layers are flat colour shapes: a light macro mix only breaks the repeat, it must not blur the shapes
+  a = mix(a, b, 0.18);
 #endif
   return a;
 }
@@ -239,14 +232,13 @@ const FRAG_MAIN = /* glsl */`
   gTint = mix(gTint, C_MARSH, clamp(bB.z * 1.2, 0.0, 0.8));
   gTint = mix(gTint, gTint * vec3(0.86, 0.94, 0.86), smoothstep(80.0, 600.0, hM));
   float lush = smoothstep(0.35, 0.7, fbm3(p * 0.045 + 21.0));
-  gTint = mix(gTint, ${S('#457f2c')}, lush * (1.0 - dry) * 0.6);
-  gTint *= 0.84 + 0.3 * m1;
+  gTint = mix(gTint, ${S('#5a9a30')}, lush * (1.0 - dry) * 0.45);
+  gTint *= 0.93 + 0.14 * m1;
   vec4 tG = layer2(0.0, p, 6.5);
   float hB = hgt(tG);
-  // texture brings mostly value (light/dark strokes) and only a little of its own hue, so the tint stays in charge
+  // cartoon set: the painted colour shapes carry the look; the regional tint only nudges their hue
   vec3 gr = tG.rgb / M_GRASS;
-  vec3 gDet = mix(vec3(dot(gr, vec3(0.3, 0.55, 0.15))), gr, 0.35);
-  col = gTint * mix(vec3(1.0), gDet, mix(0.45, 0.75, detail));
+  col = gTint * mix(vec3(1.0), gr, mix(0.6, 1.0, detail));
 
   // forest floor under woods and hills, with clearings
   float wF = clamp((bA.w + bB.x * 0.85 + bB.y * 0.5) * smoothstep(0.32, 0.6, fbm3(p * 0.11 + 11.0) + 0.12), 0.0, 1.0);
@@ -461,7 +453,8 @@ export function makeTerrainMaterial(shared, mobile) {
       // the mesh's own small relief (World.meshY, street-level chunks) on top of the baked normal: the vertex normal's
       // difference from the baked one, faded with distance like the other fine detail
       .replace('#include <normal_fragment_maps>', `vec3 nMesh = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
-        vec3 tNr = normalize(tN + (nMesh - tNT) * 0.85 * (1.0 - smoothstep(60.0, 160.0, uCamDist)));
+        vec3 tNr = tN + (nMesh - tNT) * 0.85 * (1.0 - smoothstep(60.0, 160.0, uCamDist));
+        tNr = dot(tNr, tNr) > 1e-6 && tNr.y > 0.05 ? normalize(tNr) : tN;   // never a zero or downward normal (NaN in the HDR target blew up the bloom pass)
         normal = normalize((viewMatrix * vec4(tNr, 0.0)).xyz);`)
       .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += tEmis;');
   };

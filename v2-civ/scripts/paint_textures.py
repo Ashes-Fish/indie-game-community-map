@@ -111,148 +111,160 @@ def voronoi(n_pts, seed):
     return d[:, 0].reshape(N, N), d[:, 1].reshape(N, N), i[:, 0].reshape(N, N), r
 
 
-# ---------------------------------------------------------------- 各层
-def grass():
-    n1, n2, n3 = noise(2, 6, 1), noise(6, 18, 2), noise(18, 60, 3)
-    base = lerp(hexc('#4f8c2c'), hexc('#79ad3c'), sstep(-1.2, 1.2, n1 * 0.8 + n2 * 0.4))
-    base = lerp(base, hexc('#9fb84a'), sstep(0.9, 1.8, n1 + n3 * 0.3) * 0.7)   # 偏黄的亮斑
-    base = lerp(base, hexc('#3b7428'), sstep(0.6, 1.6, -n2 + n3 * 0.3) * 0.8)  # 深色草丛
-    base *= poster(sstep(-2, 2, n2 + n3 * 0.5), 5, 0.3)[..., None] * 0.22 + 0.89
-    ang = noise(1, 4, 9) * 0.9 - np.pi / 2  # 叶片大体朝上，局部有流向
-    img = to_img(base)
-    strokes(img, lambda x, y: base[y, x], 26000, 11, (10, 22), (3, 6), lambda x, y: ang[y, x], 0.07)
-    strokes(img, lambda x, y: base[y, x] * 1.16, 5000, 12, (8, 16), (2.5, 4.5), lambda x, y: ang[y, x], 0.05)   # 高光叶
-    strokes(img, lambda x, y: base[y, x] * 0.72, 4000, 13, (8, 16), (3, 5), lambda x, y: ang[y, x], 0.05)    # 暗叶
-    c = from_img(img)
-    h = sstep(-1.5, 1.5, n2 * 0.7 + n3 * 0.6 + (c.mean(2) - c.mean()) * 6)
-    c *= shade(h, 0.5)[..., None]
-    # 小花
-    r = np.random.default_rng(14); d = ImageDraw.Draw(img := to_img(c))
-    for _ in range(int(260 * S * S)):
+# ---------------------------------------------------------------- 各层（卡通风，2026-11-18 重画）
+# 风格：大块平涂色面（3–4 个色阶，边缘柔和但清楚），大而圆润的形状，少量干净的高光 / 暗部笔触，
+# 不要照片式的细碎噪点。A 通道（高度）用同样的大形状，让层与层之间的高度混合沿着形状边缘咬合。
+
+def bands(x, cols, soft=0.06):
+    """x（任意范围）按 len(cols) 个阈值平涂上色：相邻色块之间一条窄的柔边"""
+    q = np.quantile(x, np.linspace(0, 1, len(cols) + 1)[1:-1])
+    out = np.broadcast_to(hexc(cols[0]), x.shape + (3,)).copy()
+    for t, c in zip(q, cols[1:]):
+        out = lerp(out, hexc(c), sstep(t - soft, t + soft, x))
+    return out
+
+
+def blobs(img_rgb, n, seed, r_rng, color_at, squash=1.0, mask=None, rot=None):
+    """圆润色块（卡通的草团 / 树冠 / 石块）：上半亮、下半暗的两色块，带一条深色描边"""
+    r = np.random.default_rng(seed)
+    img = to_img(img_rgb)
+    d = ImageDraw.Draw(img)
+    for _ in range(int(n * S * S)):
         x, y = r.random() * N, r.random() * N
-        col = [(244, 238, 214), (246, 206, 70), (236, 150, 160)][r.integers(3)]
-        s = r.uniform(2.2, 3.6) * S
-        wrap_draw(d, [(x - s, y), (x, y - s), (x + s, y), (x, y + s)], col)
+        ix, iy = int(x) % N, int(y) % N
+        if mask is not None and r.random() > mask[iy, ix]: continue
+        rad = r.uniform(*r_rng) * S
+        base = color_at(ix, iy)
+        k = 10
+        a0 = rot if rot is not None else r.random() * np.pi
+        jit = 1 + r.normal(0, 0.06, k)
+        def poly(sc, dx=0.0, dy=0.0):
+            return [(x + dx + np.cos(t + a0) * rad * sc * jit[i], y + dy + np.sin(t + a0) * rad * sc * squash * jit[i])
+                    for i, t in enumerate(np.linspace(0, 2 * np.pi, k, endpoint=False))]
+        col = lambda c: tuple(int(v) for v in np.clip(c * 255, 0, 255))
+        wrap_draw(d, poly(1.08, 0, rad * 0.12), col(base * 0.55))          # 描边 / 投影（略向下）
+        wrap_draw(d, poly(1.0), col(base * 0.86))                           # 暗面
+        wrap_draw(d, poly(0.72, -rad * 0.12, -rad * 0.16), col(base))       # 亮面
+        wrap_draw(d, poly(0.3, -rad * 0.3, -rad * 0.34), col(np.minimum(base * 1.18 + 0.03, 1)))   # 高光
+    return from_img(img)
+
+
+def grass():
+    # 平涂草地：三个色阶的大色块 + 稀疏的“草簇”记号（Λ 形三笔），远看干净，近看有手绘感
+    n1, n2 = noise(1, 4, 101), noise(4, 10, 102)
+    f = n1 + n2 * 0.45
+    c = bands(f, ['#5f9a32', '#74ad3a', '#86bc43', '#9bc94c'], 0.05)
+    h = sstep(-1.6, 1.6, f)
+    img = to_img(c); d = ImageDraw.Draw(img)
+    r = np.random.default_rng(103)
+    for _ in range(int(650 * S * S)):
+        x, y = r.random() * N, r.random() * N
+        ix, iy = int(x) % N, int(y) % N
+        base = c[iy, ix]
+        L = r.uniform(15, 24) * S; W = 2.6 * S
+        dark = r.random() < 0.6
+        col = tuple(int(v) for v in np.clip((base * (0.78 if dark else 1.16) + (0 if dark else 0.02)) * 255, 0, 255))
+        for a in (-0.45, 0.0, 0.45):            # 三片叶：中间高、两边斜，从同一个根部长出
+            l = L * (1.0 if a == 0 else 0.7)
+            aa = -np.pi / 2 + a + r.normal(0, 0.08)
+            tip = (x + np.cos(aa) * l, y + np.sin(aa) * l)
+            nx, ny = -np.sin(aa) * W, np.cos(aa) * W
+            mid = (x + np.cos(aa) * l * 0.45, y + np.sin(aa) * l * 0.45)
+            wrap_draw(d, [(x - nx, y - ny), (mid[0] - nx * 0.8, mid[1] - ny * 0.8), tip, (mid[0] + nx * 0.8, mid[1] + ny * 0.8), (x + nx, y + ny)], col)
+    # 小花：少量、成簇
+    for _ in range(int(40 * S * S)):
+        cx, cy = r.random() * N, r.random() * N
+        col = [(250, 244, 222), (250, 214, 84), (238, 140, 150)][r.integers(3)]
+        for _ in range(r.integers(3, 7)):
+            x, y = cx + r.normal(0, 14 * S), cy + r.normal(0, 14 * S); s = r.uniform(2.6, 3.8) * S
+            wrap_draw(d, [(x + np.cos(t) * s, y + np.sin(t) * s) for t in np.linspace(0, 6.28, 6, endpoint=False)], col)
     return from_img(img), h
 
 
 def paddy():
-    # 一排排秧苗（纹理里横向成行），行间露水；A 通道 = 秧苗覆盖
-    n1, n2 = noise(2, 8, 21), noise(10, 40, 22)
-    rows = 40                       # 每张图 40 行
-    yy = (np.arange(N)[:, None] + noise(1, 3, 23) * 6 * S) / N * rows
-    rowm = sstep(0.18, 0.42, 0.5 - np.abs((yy % 1) - 0.5)) * np.ones((1, N))
-    base = lerp(hexc('#5d9a33'), hexc('#8fbd45'), sstep(-1.5, 1.5, n1 + n2 * 0.4))
-    water = lerp(hexc('#5a8c84'), hexc('#8ab8b0'), sstep(-1, 1.5, n2))
-    c = lerp(water, base, rowm)
-    img = to_img(c)
-    r = np.random.default_rng(24)
-    d = ImageDraw.Draw(img)
-    # 每行上的秧苗簇：几片向上张开的叶
-    for row in range(rows):
-        y0 = (row + 0.5) / rows * N
-        x = r.random() * 8 * S
-        while x < N:
-            ix = int(x) % N; iy = int(y0) % N
-            col0 = base[iy, ix]
-            for k in range(4):
-                a = -np.pi / 2 + r.normal(0, 0.55)
-                L, W = r.uniform(7, 13) * S, r.uniform(2, 3.5) * S
-                cx, cy = x + r.normal(0, 1.2) * S, y0 + (r.normal(0, 1.5) + 2) * S
-                col = tuple(int(v) for v in np.clip(col0 * (1 + r.normal(0, 0.09)) * (1.1 if k == 0 else 0.92) * 255, 0, 255))
-                ca, sa = np.cos(a), np.sin(a)
-                pts = [(0, 0), (L * 0.45, -W * 0.5), (L, 0), (L * 0.45, W * 0.5)]
-                wrap_draw(d, [(cx + px * ca - py * sa, cy + px * sa + py * ca) for px, py in pts], col)
-            x += r.uniform(9, 14) * S
-    c = from_img(img)
-    h = np.clip(rowm * 0.75 + sstep(-1, 1, n2) * 0.2 + (c.mean(2) - water.mean(2)) * 0.8, 0, 1)
-    c *= shade(h, 0.35)[..., None]
+    # 水田：平涂的秧苗行（两种绿）+ 行间亮青色水面，行稍有弯曲；不再是细密条纹
+    n1 = noise(1, 3, 121)
+    rows = 18
+    yy = (np.arange(N)[:, None] + n1 * 10 * S) / N * rows
+    fr = yy % 1
+    rowm = sstep(0.16, 0.24, fr) * (1 - sstep(0.76, 0.84, fr))
+    tone = sstep(-1.0, 1.0, noise(2, 6, 122))
+    plant = lerp(hexc('#6eaa36'), hexc('#8cc24a'), tone)
+    plant = lerp(plant, plant * 1.12, sstep(0.25, 0.4, fr) * (1 - sstep(0.4, 0.55, fr)))   # 每行上沿亮
+    water = lerp(hexc('#6fb0a6'), hexc('#8ccac0'), sstep(-1, 1, noise(3, 8, 123)))
+    c = lerp(water, plant, rowm)
+    h = np.clip(rowm * 0.85 + 0.1, 0, 1)
     return c, h
 
 
 def forest():
-    n1, n2, n3 = noise(2, 6, 31), noise(6, 20, 32), noise(20, 60, 33)
-    base = lerp(hexc('#2f5e26'), hexc('#4f7f2e'), sstep(-1.2, 1.2, n1 + n2 * 0.5))
-    base = lerp(base, hexc('#6b6a34'), sstep(0.8, 1.8, n2 + n3 * 0.4) * 0.7)   # 落叶
-    base = lerp(base, hexc('#22441f'), sstep(0.7, 1.6, -n1 * 0.7 - n2 * 0.6) * 0.8)
-    img = to_img(base)
-    strokes(img, lambda x, y: base[y, x], 9000, 34, (12, 26), (8, 16), None, 0.09, 'blob')
-    strokes(img, lambda x, y: base[y, x] * 1.22 + np.array([0.03, 0.02, -0.01]), 2600, 35, (6, 12), (5, 9), None, 0.08, 'blob')
-    strokes(img, lambda x, y: hexc('#8a6a3a') * (0.8 + 0.4 * (n3[y, x] > 0)), 900, 36, (5, 10), (3, 5), None, 0.1, 'blob')  # 枯叶
+    # 林下：深绿平涂底 + 大小两级圆润“灌木团”（亮面 / 暗面 / 高光三色），落叶色点少量
+    n1, n2 = noise(1, 4, 131), noise(4, 10, 132)
+    base = bands(n1 + n2 * 0.4, ['#2f6326', '#3b7429', '#4a842f'], 0.05)
+    c = blobs(base, 230, 133, (24, 38), lambda x, y: base[y, x] * 1.25 + np.array([0.02, 0.03, 0.0]))
+    c = blobs(c, 380, 134, (12, 19), lambda x, y: base[y, x] * 1.45 + np.array([0.04, 0.05, 0.0]))
+    img = to_img(c); d = ImageDraw.Draw(img); r = np.random.default_rng(135)
+    for _ in range(int(160 * S * S)):
+        x, y = r.random() * N, r.random() * N; s = r.uniform(3, 5) * S
+        col = [(214, 160, 66), (196, 110, 52)][r.integers(2)]
+        wrap_draw(d, [(x + np.cos(t) * s, y + np.sin(t) * s * 0.8) for t in np.linspace(0, 6.28, 7, endpoint=False)], col)
     c = from_img(img)
-    h = sstep(-1.6, 1.6, n2 * 0.8 + n3 * 0.5 + (c.mean(2) - c.mean()) * 5)
-    c *= shade(h, 0.6)[..., None]
+    h = sstep(0.18, 0.5, c.mean(2))
     return c, h
 
 
 def rock():
-    # 层理岩：横向拉长的岩块（各向异性 Voronoi）+ 色带 + 裂隙下方的阴影、上沿的亮边
-    r = np.random.default_rng(41)
-    K = 2.6
-    P = r.random((90, 2)) * [1, K]
+    # 卡通岩石：大的多边形石块（Voronoi），每块平涂一色，上沿一条亮边、下沿一条暗边，缝隙深色；无细碎纹理
+    r = np.random.default_rng(141)
+    K = 1.6
+    P = r.random((46, 2)) * [1, K]
     tree = cKDTree(P, boxsize=[1, K])
     g = (np.arange(N) + 0.5) / N
     Y, X = np.meshgrid(g, g, indexing='ij')
-    warp = noise(1, 4, 46) * 0.03
+    warp = noise(1, 3, 142) * 0.02
     d, i = tree.query(np.stack([X.ravel(), ((Y + warp) % 1).ravel() * K], 1), k=2)
     f1, f2, idx = d[:, 0].reshape(N, N), d[:, 1].reshape(N, N), i[:, 0].reshape(N, N)
-    n1, n2, n3 = noise(2, 8, 42), noise(8, 30, 43), noise(30, 90, 44)
-    tone = r.random(len(P))
     edge = f2 - f1
-    crack = 1 - sstep(0.002, 0.014, edge + n3 * 0.002)
-    bevel = sstep(0.0, 0.07, edge)
-    band = np.floor(((Y + warp * 2 + n1 * 0.02) % 1) * 9)
-    bt = (np.sin(band * 12.9898) * 43758.5453) % 1
-    c = lerp(hexc('#7f786c'), hexc('#a59a86'), np.clip(tone[idx] * 0.6 + bt * 0.4, 0, 1))
-    c = lerp(c, hexc('#9a7f5e'), (bt > 0.72) * 0.45)                     # 赭石色带
-    c = lerp(c, hexc('#68704c'), sstep(0.7, 1.6, n1 + n2 * 0.5) * 0.45)  # 苔藓
-    h = np.clip(bevel * 0.75 + sstep(-2, 2, n2 + n3 * 0.4) * 0.25, 0, 1)
-    lit = shade(h, 1.0)
-    c *= poster(np.clip((lit - 0.55) / 0.9, 0, 1), 4, 0.35)[..., None] * 0.4 + 0.8
-    below = np.roll(crack, int(7 * S), 0) * (1 - crack)      # 裂隙下方阴影（岩檐）
-    above = np.roll(crack, -int(3 * S), 0) * (1 - crack)     # 上沿亮边
-    c = lerp(c, c * 0.62, np.clip(below, 0, 1) * 0.8)
-    c = lerp(c, c * 1.18, np.clip(above, 0, 1) * 0.6)
-    c = lerp(c, hexc('#3a352e'), crack * 0.85)
-    img = to_img(c)
-    strokes(img, lambda x, y: c[y, x], 6000, 45, (10, 24), (3, 6), lambda x, y: 0.05, 0.04, 'blob', mask=1 - crack)
-    c = from_img(img)
-    c = lerp(c, hexc('#3a352e'), crack * 0.5)
+    tone = r.random(len(P))
+    pal = [hexc('#8c8579'), hexc('#9d9585'), hexc('#ada38f'), hexc('#857c6e')]
+    c = np.stack([pal[int(t * 4) % 4] for t in tone])[idx]
+    crack = 1 - sstep(0.004, 0.012, edge)
+    # 每块的“顶面”：沿裂缝往上一段亮边，往下一段暗边（像 Civ 式的厚石块）
+    above = (1 - sstep(0.012, 0.03, edge)) * (np.roll(edge, int(10 * S), 0) > edge)
+    c = lerp(c, np.minimum(c * 1.2 + 0.03, 1), np.clip(above, 0, 1) * 0.9)
+    below = np.roll(crack, int(9 * S), 0) * (1 - crack)
+    c = lerp(c, c * 0.68, np.clip(below, 0, 1))
+    c = lerp(c, hexc('#4a433b'), crack)
+    c = lerp(c, hexc('#7d8a52'), sstep(0.9, 1.6, noise(2, 6, 143)) * 0.55 * (1 - crack))   # 苔藓色块
+    h = np.clip(sstep(0.0, 0.05, edge), 0, 1)
     return c, h
 
 
 def sand():
-    n1, n2, n3 = noise(2, 6, 51), noise(6, 20, 52), noise(40, 160, 53)
-    warp = noise(1, 4, 54) * 18
-    yy = (np.arange(N)[:, None] + warp + np.arange(N)[None, :] * 0.18) / N * 22
-    rip = 0.5 + 0.5 * np.sin(yy * 2 * np.pi + n2 * 0.8)
-    c = lerp(hexc('#d9c48c'), hexc('#ecdcaa'), sstep(-1.4, 1.4, n1 + n2 * 0.3))
-    c = lerp(c, hexc('#c4a874'), sstep(0.7, 1.6, -n1) * 0.6)
-    h = np.clip(rip * 0.6 + sstep(-1.5, 1.5, n2) * 0.4, 0, 1)
-    c *= shade(h, 0.4)[..., None]
-    c *= 1 + n3[..., None] * 0.045
-    img = to_img(c)
-    r = np.random.default_rng(55); d = ImageDraw.Draw(img)
-    for _ in range(int(420 * S * S)):   # 小石子/贝壳
-        x, y = r.random() * N, r.random() * N
-        s = r.uniform(2, 4.5) * S
-        col = tuple(int(v) for v in np.clip(hexc(['#b39a72', '#f6efe0', '#9a8466'][r.integers(3)]) * 255, 0, 255))
+    # 沙：两色平涂 + 宽而柔的沙纹（亮带），几颗小贝壳 / 石子
+    n1 = noise(1, 4, 151)
+    warp = noise(1, 3, 152) * 30 * S
+    yy = (np.arange(N)[:, None] + warp + np.arange(N)[None, :] * 0.2) / N * 9
+    rip = sstep(0.55, 0.75, 0.5 + 0.5 * np.sin(yy * 2 * np.pi))
+    c = bands(n1, ['#dcc58b', '#e7d39c', '#f0dfae'], 0.06)
+    c = lerp(c, np.minimum(c * 1.07, 1), rip * 0.8)
+    h = np.clip(rip * 0.6 + sstep(-1.5, 1.5, n1) * 0.4, 0, 1)
+    img = to_img(c); d = ImageDraw.Draw(img); r = np.random.default_rng(153)
+    for _ in range(int(90 * S * S)):
+        x, y = r.random() * N, r.random() * N; s = r.uniform(3, 5.5) * S
+        col = [(246, 238, 220), (190, 162, 120), (238, 196, 170)][r.integers(3)]
         wrap_draw(d, [(x + np.cos(t) * s, y + np.sin(t) * s * 0.7) for t in np.linspace(0, 6.28, 7, endpoint=False)], col)
     return from_img(img), h
 
 
 def snow():
-    n1, n2, n3 = noise(2, 6, 61), noise(6, 24, 62), noise(30, 120, 63)
-    drift = sstep(-1.2, 1.4, n1 * 0.7 + n2 * 0.6)
-    h = drift
-    lit = shade(h, 1.4)
-    c = lerp(hexc('#b7c6dc'), hexc('#f4f7fb'), np.clip(poster(np.clip((lit - 0.5), 0, 1), 4, 0.35), 0, 1))
-    c *= 1 + n3[..., None] * 0.02
-    img = to_img(c)
-    strokes(img, lambda x, y: c[y, x], 5000, 64, (14, 30), (5, 9), lambda x, y: 0.25, 0.03, 'blob')
-    c = from_img(img)
-    sp = (noise(150, 300, 65) > 3.0).astype(np.float32)   # 闪点
-    c = c + sp[..., None] * 0.25
+    # 雪：白与浅蓝两色平涂的雪堆，背光一侧浅蓝；少量亮点
+    n1, n2 = noise(1, 4, 161), noise(4, 10, 162)
+    f = n1 + n2 * 0.5
+    h = sstep(-1.4, 1.4, f)
+    lit = shade(h, 1.2)
+    c = lerp(hexc('#c3d3e8'), hexc('#f3f7fc'), sstep(0.92, 1.02, lit))
+    c = lerp(c, hexc('#ffffff'), sstep(1.1, 1.2, lit) * 0.7)
     return c, h
 
 
